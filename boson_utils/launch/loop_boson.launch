@@ -1,0 +1,11 @@
+<launch>
+  <!-- Play the latest thermal recording on loop -->
+  <node name="rosbag_play" pkg="rosbag" type="play"
+        args="--loop /home/etsa/2025-06-24-14-18-51.bag"
+        output="screen" />
+  <!-- Launch RViz with window size 1600x900 at top-left -->
+  <node name="rviz" pkg="rviz" type="rviz"
+        args="-d $(find boson_utils)/rviz/view_thermal.rviz --geometry 1600x900+0+0"
+        output="screen" />
+</launch>
+

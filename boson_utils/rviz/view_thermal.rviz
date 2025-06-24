@@ -1,0 +1,9 @@
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Image
+      Name: Thermal Camera
+      Image Topic: /boson/image_raw
+      Transport Hint: raw
+  Global Options:
+    Fixed Frame: base_link

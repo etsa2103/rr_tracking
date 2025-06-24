@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>boson_utils</name>
+  <version>0.0.1</version>
+  <description>Python-only ROS package</description>
+
+  <maintainer email="etsa@seas.upenn.edu">Ethan Sanchez</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export>
+  </export>
+</package>
