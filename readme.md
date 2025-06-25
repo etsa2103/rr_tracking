@@ -43,7 +43,7 @@ source devel/setup.bash
         ```bash
         roslaunch boson_utils/boson640.launch
         ```
-    - To stream live video feed and view in rviz
+    - To stream live video feed and open a display
         ```bash
         roslaunch boson_camera boson_live.launch
         ```
@@ -58,9 +58,9 @@ source devel/setup.bash
     roslaunch boson_camera boson_live.launch
     rosbag record /boson/image_raw
     ```
-  - To loop bagged video and view in rviz
+  - To loop bagged video and open a display
     ```bash
-    roslaunch boson_utils/loop_boson.launch
+    roslaunch boson_utils loop_boson.launch
     ```
 - Notes:
     - ADD NOTE ABOUT WHERE BAG IS SAVED TO AND HOW TO CHOOSE WHICH BAG TO LOOP
