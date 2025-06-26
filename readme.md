@@ -47,13 +47,18 @@ source devel/setup.bash
 ### `rr_tracking`
 - Nodes:
   - `blaze_pose_node.cpp`
-    - Publishes `mono16` audio on `/boson/image_raw`.
+    - Looks at raw video on `/boson/image_raw` topic and converts from `mono16` to `rgb8` so it can be used in blazePose. 
+    - Runs facial tracking to find keypoints (eyes, nose, and mouth corners). 
+    - Creates an annotated image with box around face and box around nose region and publishes `rgb8` image on `/boson/image_annotated`
+    - Grabs pixels around nose region on raw `mono16` image and and publishes on `/boson/image_roi`
   - `clahe_filter_node.cpp`
-    - Publishes `mono16` audio on `/boson/image_raw`.
+    - Might use on raw image before pasing to blazePose.
   - `display_node.cpp`
-    - Publishes `mono16` audio on `/boson/image_raw`.
+    - Custom display that streams images found on `/boson/image_raw`, `/boson/image_annotated`, and `/boson/image_roi` topics.
   - `rr_tracking_node.cpp`
-    - Publishes `mono16` audio on `/boson/image_raw`.
+    - Looks at `mono16` video on `/boson/image_roi`.
+    - Takes average of pixels to get raw signal
+    - Filters signal then extracts resperation rate
 
 ## TODO
 - [x] Record thermal images

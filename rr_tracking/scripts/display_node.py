@@ -3,11 +3,17 @@
 import rospy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32
+
 from cv_bridge import CvBridge
 import cv2
+
 import time
-from collections import deque
+from datetime import datetime
 import numpy as np
+from collections import deque
+
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 class DisplayNode:
     def __init__(self):
@@ -23,14 +29,17 @@ class DisplayNode:
         self.latest_annotated = black.copy()
         self.latest_roi = black.copy()
 
+        # Timestamp of latest frames
+        self.raw_timestamp = None
+        self.annotated_timestamp = None
+        self.roi_timestamp = None
+        
         # Simulated breath peak flag (optional visual flash)
         self.breath_peak = False
 
         # Latest matched BPM to show with annotated frame
         self.latest_bpm = None
-
-        # Initialize BPM buffer: (timestamp, bpm)
-        self.bpm_buffer = deque(maxlen=100)
+        self.bmp_timestamp = None
 
         # Subscribers
         rospy.Subscriber("/boson/image_raw", Image, self.raw_callback)
@@ -41,58 +50,53 @@ class DisplayNode:
         # Display update timer (10 Hz)
         rospy.Timer(rospy.Duration(0.1), self.display_timer_callback)
 
-    def mono16_to_rgb(self, image_raw):
-        min_val, max_val = np.min(image_raw), np.max(image_raw)
-        if max_val == min_val:
-            rospy.logwarn("Image has no variation, using default color.")
-            image_mono8 = np.zeros_like(image_raw, dtype=np.uint8)
-            image_rgb = cv2.cvtColor(image_raw, cv2.COLOR_GRAY2RGB)
-        else:
-            image_mono8 = ((image_raw - min_val) / (max_val - min_val) * 255).astype(np.uint8)
-            image_rgb = cv2.cvtColor(image_mono8, cv2.COLOR_GRAY2RGB)
-        return image_rgb
-
     def raw_callback(self, msg):
         try:
+            # Convert ROS Image message to OpenCV format
             image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
-            image_rgb = self.mono16_to_rgb(image_raw)
+            # Normalize and convert to RGB
+            min_val, max_val = np.min(image_raw), np.max(image_raw)
+            image_mono8 = ((image_raw - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+            image_rgb = cv2.cvtColor(image_mono8, cv2.COLOR_GRAY2RGB)
+            # Resize to display size
             self.latest_raw = self.safe_resize(image_rgb)
+            # Get timestamp from raw image
+            self.raw_timestamp = datetime.fromtimestamp(msg.header.stamp.to_sec()).strftime("%H:%M:%S")
+            
         except Exception as e:
             rospy.logerr(f"[raw_callback] {e}")
 
     def annotated_callback(self, msg):
         try:
+            # Convert ROS Image message to OpenCV format
             image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
+            # Resize to display size
             self.latest_annotated = self.safe_resize(image)
-
             # Get timestamp from annotated image
-            annotated_stamp = msg.header.stamp.to_sec()
+            self.annotated_timestamp = datetime.fromtimestamp(msg.header.stamp.to_sec()).strftime("%H:%M:%S")
 
-            # Match closest BPM to this timestamp
-            matched_bpm = None
-            min_bpm_diff = float("inf")
-            for bpm_stamp, bpm_val in self.bpm_buffer:
-                diff = abs(bpm_stamp - annotated_stamp)
-                if diff < min_bpm_diff:
-                    matched_bpm = bpm_val
-                    min_bpm_diff = diff
-
-            self.latest_bpm = matched_bpm
         except Exception as e:
             rospy.logerr(f"[annotated_callback] {e}")
 
     def roi_callback(self, msg):
         try:
+            # Convert ROS Image message to OpenCV format
             image_roi = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
-            image_roi = self.mono16_to_rgb(image_roi)
+            # Normalize and convert to RGB to display
+            min_val, max_val = np.min(image_roi), np.max(image_roi)
+            image_mono8 = ((image_roi - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+            image_roi = cv2.cvtColor(image_mono8, cv2.COLOR_GRAY2RGB)
+            # Resize to display size
             self.latest_roi = self.safe_resize(image_roi)
+            # Get timestamp from roi image
+            self.roi_timestamp = datetime.fromtimestamp(msg.header.stamp.to_sec()).strftime("%H:%M:%S")
         except Exception as e:
             rospy.logerr(f"[roi_callback] {e}")
 
     def breath_rate_callback(self, msg):
         try:
-            stamp = time.time()
-            self.bpm_buffer.append((stamp, msg.data))
+            self.latest_bpm = msg.data
+            #self.bmp_timestamp = datetime.fromtimestamp(msg.header.stamp.to_sec()).strftime("%H:%M:%S")
         except Exception as e:
             rospy.logerr(f"[bpm_callback] {e}")
 
@@ -105,21 +109,37 @@ class DisplayNode:
 
     def display_timer_callback(self, event):
         try:
+            # Flash display if breath peak detected
             flash_display = self.latest_roi.copy()
             if self.breath_peak:
                 flash_display[:] = [0, 255, 0]
 
+            # Combine all images into a single display
             top_row = np.hstack((self.latest_raw, self.latest_annotated))
             bottom_row = np.hstack((self.latest_roi, flash_display))
             combined = np.vstack((top_row, bottom_row))
-
+                
+            # Show timestamps if available
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            if self.raw_timestamp is not None:
+                timestamp_str = self.raw_timestamp
+                cv2.putText(combined, timestamp_str, (20, 40), font, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
+            if self.annotated_timestamp is not None:
+                timestamp_str = self.annotated_timestamp
+                cv2.putText(combined, timestamp_str, (670, 40), font, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
+            if self.roi_timestamp is not None:
+                timestamp_str = self.roi_timestamp
+                cv2.putText(combined, timestamp_str, (20, 520), font, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
+                
+            # Add bpm annotation
             if self.latest_bpm is not None:
                 text = f"BPM: {self.latest_bpm:.1f}"
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 font_scale = 1.2
                 thickness = 3
                 color = (0, 255, 0)
-                cv2.putText(combined, text, (670, 50), font, font_scale, color, thickness, cv2.LINE_AA)
+                cv2.putText(combined, text, (670, 510), font, font_scale, color, thickness, cv2.LINE_AA)
+                #cv2.putText(combined, self.bmp_timestamp, (670, 520), font, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
 
             cv2.imshow("Thermal Debug Views", combined)
             cv2.waitKey(1)
