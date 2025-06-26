@@ -1,6 +1,0 @@
-<launch>
-  <!-- Launch the BlazeFace node -->
-  <node name="blazePose_node" pkg="blaze_pose" type="blazePose_node.py"
-        output="screen">
-  </node>
-</launch>

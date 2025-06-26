@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+
+import rospy
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import cv2
+import numpy as np
+import mediapipe as mp
+
+class BlazePoseNode:
+    def __init__(self):
+        rospy.init_node("blazepose_node")
+        self.bridge = CvBridge()
+
+        self.pose = mp.solutions.pose.Pose(static_image_mode=False, model_complexity=1, min_detection_confidence=0.5)
+
+        rospy.Subscriber("/boson/image_raw", Image, self.callback)
+        self.image_annotated_pub = rospy.Publisher("/boson/image_annotated", Image, queue_size=1, latch=True)
+        self.image_roi_pub = rospy.Publisher("/boson/image_roi", Image, queue_size=1, latch=True)
+
+    def callback(self, msg):
+        try:
+            image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
+            # Normalize and convert to RGB
+            min_val, max_val = np.min(image_raw), np.max(image_raw)
+            # Avoid division by zero
+            if max_val == min_val:
+                rospy.logwarn("Image has no variation, using default color.")
+                image_rgb = cv2.cvtColor(image_raw, cv2.COLOR_GRAY2RGB)
+            else:
+                image_mono8 = ((image_raw - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+                image_rgb = cv2.cvtColor(image_mono8, cv2.COLOR_GRAY2RGB)
+
+            # Detect pose
+            results = self.pose.process(image_rgb)
+            if not results.pose_landmarks:
+                return
+
+            h, w, _ = image_rgb.shape
+            lm = mp.solutions.pose.PoseLandmark
+            landmarks = results.pose_landmarks.landmark
+
+            # Get key landmarks
+            pts = [landmarks[lm.NOSE], landmarks[lm.MOUTH_LEFT], landmarks[lm.MOUTH_RIGHT],
+                   landmarks[lm.LEFT_EYE], landmarks[lm.RIGHT_EYE]]
+            xs = [int(p.x * w) for p in pts]
+            ys = [int(p.y * h) for p in pts]
+
+            # TROI: Bounding box around facial features
+            margin = 10
+            x_min = max(min(xs) - margin, 0)
+            x_max = min(max(xs) + margin, w)
+            y_min = max(min(ys) - margin, 0)
+            y_max = min(max(ys) + margin, h)
+            roi_height = y_max - y_min
+            roi_width = x_max - x_min
+            # MROI: Region below nose (breathing area)
+            centerX = np.mean(xs)
+            centerY = np.mean(ys)
+            mroi_y_min = int(centerY - 0.1*roi_height)
+            mroi_y_max = int(centerY + 0.06*roi_height)
+            mroi_x_min = int(centerX - 0.3*roi_width)
+            mroi_x_max = int(centerX + 0.1*roi_width)
+
+            # Draw boxes for debug
+            cv2.rectangle(image_rgb, (x_min, y_min), (x_max, y_max), (0, 255, 0), 1)  # TROI
+            cv2.rectangle(image_rgb, (mroi_x_min, mroi_y_min), (mroi_x_max, mroi_y_max), (255, 0, 0), 1)  # MROI
+
+            # Publish annotated RGB image
+            annotated_msg = self.bridge.cv2_to_imgmsg(image_rgb, encoding='rgb8')
+            annotated_msg.header = msg.header
+
+            self.image_annotated_pub.publish(annotated_msg)
+
+            # Extract and publish mono16 MROI for breathing signal
+            image_roi = image_raw[mroi_y_min:mroi_y_max, mroi_x_min:mroi_x_max]
+            roi_msg = self.bridge.cv2_to_imgmsg(image_roi, encoding='mono16')
+            roi_msg.header = msg.header
+            self.image_roi_pub.publish(roi_msg)
+
+        except Exception as e:
+            rospy.logerr(f"[BlazePoseNode] Error: {e}")
+
+if __name__ == "__main__":
+    BlazePoseNode()
+    rospy.spin()

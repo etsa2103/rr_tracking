@@ -1,0 +1,16 @@
+<launch>
+  <!-- Play the latest thermal recording on loop -->
+  <node name="rosbag_play" pkg="rosbag" type="play"
+        args="--loop /home/etsa/boson_recordings/test6.bag"
+        output="screen" />
+
+  <!-- Run blaze_pose node -->
+  <node pkg="rr_tracking" type="blaze_pose_node.py" name="blaze_pose_node" output="screen" />
+
+  <!-- Run rr_tracking node -->
+  <node pkg="rr_tracking" type="rr_tracking_node.py" name="rr_tracking_node" output="screen" />
+
+  <!-- Run the display node -->
+  <node pkg="rr_tracking" type="display_node.py" name="display_node" 
+        output="screen" launch-prefix="python3" />
+</launch>
