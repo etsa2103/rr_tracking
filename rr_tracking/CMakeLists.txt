@@ -9,6 +9,7 @@ catkin_install_python(PROGRAMS
   scripts/blaze_pose_node.py
   scripts/clahe_filter_node.py
   scripts/display_node.py
+  scripts/gui_node.py
   scripts/rr_tracking_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

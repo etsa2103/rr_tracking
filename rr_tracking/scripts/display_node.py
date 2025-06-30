@@ -38,14 +38,16 @@ class DisplayNode:
         self.breath_peak = False
 
         # Latest matched BPM to show with annotated frame
-        self.latest_bpm = None
+        self.latest_rr_inst = None
+        self.latest_rr_avg = None
         self.bmp_timestamp = None
 
         # Subscribers
         rospy.Subscriber("/boson/image_raw", Image, self.raw_callback)
         rospy.Subscriber("/boson/image_roi", Image, self.roi_callback)
         rospy.Subscriber("/boson/image_annotated", Image, self.annotated_callback)
-        rospy.Subscriber("/rr_tracking/breath_rate", Float32, self.breath_rate_callback)
+        rospy.Subscriber("/rr_tracking/rr_inst", Float32, self.rr_inst_callback)
+        rospy.Subscriber("/rr_tracking/rr_avg", Float32, self.rr_avg_callback)
 
         # Display update timer (10 Hz)
         rospy.Timer(rospy.Duration(0.1), self.display_timer_callback)
@@ -93,12 +95,19 @@ class DisplayNode:
         except Exception as e:
             rospy.logerr(f"[roi_callback] {e}")
 
-    def breath_rate_callback(self, msg):
+    def rr_inst_callback(self, msg):
         try:
-            self.latest_bpm = msg.data
-            #self.bmp_timestamp = datetime.fromtimestamp(msg.header.stamp.to_sec()).strftime("%H:%M:%S")
+            self.latest_rr_inst = msg.data
+            #self.rr_inst_timestamp = datetime.fromtimestamp(msg.header.stamp.to_sec()).strftime("%H:%M:%S")
         except Exception as e:
-            rospy.logerr(f"[bpm_callback] {e}")
+            rospy.logerr(f"[rr_inst_callback] {e}")
+            
+    def rr_avg_callback(self, msg):
+        try:
+            self.latest_rr_avg = msg.data
+            #self.rr_avg_timestamp = datetime.fromtimestamp(msg.header.stamp.to_sec()).strftime("%H:%M:%S")
+        except Exception as e:
+            rospy.logerr(f"[rr_avg_callback] {e}")
 
     def safe_resize(self, img):
         try:
@@ -110,9 +119,10 @@ class DisplayNode:
     def display_timer_callback(self, event):
         try:
             # Flash display if breath peak detected
-            flash_display = self.latest_roi.copy()
-            if self.breath_peak:
-                flash_display[:] = [0, 255, 0]
+            flash_display = np.zeros((self.disp_h, self.disp_w, 3), dtype=np.uint8)
+            # flash_display = self.latest_roi.copy()
+            # if self.breath_peak:
+            #     flash_display[:] = [0, 255, 0]
 
             # Combine all images into a single display
             top_row = np.hstack((self.latest_raw, self.latest_annotated))
@@ -131,15 +141,18 @@ class DisplayNode:
                 timestamp_str = self.roi_timestamp
                 cv2.putText(combined, timestamp_str, (20, 520), font, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
                 
-            # Add bpm annotation
-            if self.latest_bpm is not None:
-                text = f"BPM: {self.latest_bpm:.1f}"
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale = 1.2
-                thickness = 3
-                color = (0, 255, 0)
-                cv2.putText(combined, text, (670, 510), font, font_scale, color, thickness, cv2.LINE_AA)
-                #cv2.putText(combined, self.bmp_timestamp, (670, 520), font, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
+            # Add instantanious respiration rate text if available
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.8
+            color = (0, 255, 0)
+            thickness = 2
+            if self.latest_rr_inst is not None:
+                text = f"Resperation Rate: {self.latest_rr_inst:.1f} BPM"
+                cv2.putText(combined, text, (790, 540), font, font_scale, color, thickness, cv2.LINE_AA)
+            # Add average respiration rate text if available
+            if self.latest_rr_avg is not None:
+                text = f"Average Resperation Rate: {self.latest_rr_avg:.1f} BPM"
+                cv2.putText(combined, text, (670, 570), font, font_scale, color, thickness, cv2.LINE_AA)
 
             cv2.imshow("Thermal Debug Views", combined)
             cv2.waitKey(1)

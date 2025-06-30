@@ -1,0 +1,2 @@
+sudo apt install ros-noetic-cv-bridge ros-noethic-image-transport
+pip install pyqt5 pyqtgraph pandas

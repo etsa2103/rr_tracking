@@ -26,7 +26,11 @@ class BlazePoseNode:
             image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
             # Normalize and convert to RGB
             min_val, max_val = np.min(image_raw), np.max(image_raw)
-            image_mono8 = ((image_raw - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+            if max_val == min_val:
+                image_mono8 = np.zeros_like(image_raw, dtype=np.uint8)
+            else:
+                image_mono8 = ((image_raw - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+
             image_rgb = cv2.cvtColor(image_mono8, cv2.COLOR_GRAY2RGB)
             # Run BlazePose detection
             results = self.pose.process(image_rgb)
@@ -54,10 +58,13 @@ class BlazePoseNode:
             # MROI: Region below nose (breathing area)
             centerX = np.mean(xs)
             centerY = np.mean(ys)
-            mroi_y_min = int(centerY - 0.12*troi_height)
-            mroi_y_max = int(centerY + 0.06*troi_height)
-            mroi_x_min = int(centerX - 0.35*troi_width)
-            mroi_x_max = int(centerX + 0.07*troi_width)
+            mroi_y_min = int(centerY - 0.20*troi_height)
+            mroi_y_max = int(centerY + 0.10*troi_height)
+            mroi_x_min = int(centerX - 0.40*troi_width)
+            mroi_x_max = int(centerX + 0.10*troi_width)
+            # Ensure valid non-zero region
+            if mroi_y_max <= mroi_y_min or mroi_x_max <= mroi_x_min:
+                return
 
             # Draw boxes for annotation
             cv2.rectangle(image_rgb, (x_min, y_min), (x_max, y_max), (0, 255, 0), 1)  # TROI

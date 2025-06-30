@@ -26,17 +26,19 @@ class SimpleBreathTracker:
         self.bridge = CvBridge()
 
         self.frame_rate = 30                  # Hz
-        self.buffer_size = 450                # ~10 seconds
+        self.buffer_size = 450                # ~15 seconds
         self.min_peak_distance = 2            # seconds
 
         self.signal_buffer = deque(maxlen=self.buffer_size)
-        self.time_buffer = deque(maxlen=self.buffer_size)
+        self.time_buffer = deque(maxlen=1350)
+        self.peak_buffer = deque(maxlen=1350)
 
         rospy.Subscriber("/boson/image_roi", Image, self.image_cb)
         self.raw_pub = rospy.Publisher("/rr_tracking/raw_signal", Float32, queue_size=1)
         self.filtered_pub = rospy.Publisher("/rr_tracking/filtered_signal", Float32, queue_size=1)
-        self.bpm_pub = rospy.Publisher("/rr_tracking/breath_rate", Float32, queue_size=1)
-        self.bpm_timestamp_pub = rospy.Publisher("/rr_tracking/bpm_timestamp", Float32, queue_size=1)
+        self.rr_inst_pub = rospy.Publisher("/rr_tracking/rr_inst", Float32, queue_size=1)
+        self.rr_inst_timestamp_pub = rospy.Publisher("/rr_tracking/rr_inst_timestamp", Float32, queue_size=1)
+        self.rr_avg_pub = rospy.Publisher("/rr_tracking/rr_avg", Float32, queue_size=1)
         
 
     def image_cb(self, msg):
@@ -46,6 +48,7 @@ class SimpleBreathTracker:
             return
         mean_val = np.mean(img)
         now = time.time()
+        
         # Add to buffer
         self.signal_buffer.append(mean_val)
         self.time_buffer.append(now)
@@ -54,33 +57,44 @@ class SimpleBreathTracker:
         signal = np.array(self.signal_buffer)
         times = np.array(self.time_buffer)
 
-        # publish the latest raw signal value
-        baseline = uniform_filter1d(signal, size=90)  # ~2 seconds at 30 Hz
-        # Subtract baseline (preserves dips!)
+        # ====== Clean up raw signal ======
+        # Normalize signal
+        baseline = uniform_filter1d(signal, size=90)  # ~3 seconds at 30 Hz
         normalized = signal - baseline
-        self.raw_pub.publish(Float32(normalized[-1]))
+        # clip and Invert signal for peak detection
+        inverted = np.clip(-normalized,-100.0, 100.0)
+        # Publish the latest raw signal value
+        self.raw_pub.publish(Float32(inverted[-1]))
+        self.peak_buffer.append(normalized[-1])
         
         # ====== Filter signal ======
-        signal = gaussian_filter1d(signal, sigma=3)
-        # Estimate local baseline using sliding window
-        baseline = uniform_filter1d(signal, size=90)  # ~2 seconds at 30 Hz
-        # Subtract baseline (preserves dips!)
-        normalized = signal - baseline
-        filtered = bandpass(normalized, fs=self.frame_rate)
-        filtered = filtered * 3
-        # publish the latest raw signal value
+        filtered = bandpass(inverted, fs=self.frame_rate)
+        # Publish the latest filtered signal value
         self.filtered_pub.publish(Float32(filtered[-1]))
         
         # ====== Peak detection ======
         min_samples = int(self.min_peak_distance * self.frame_rate)
-        peaks, _ = find_peaks(filtered, distance=min_samples)
+        peak_signal = np.array(self.peak_buffer)
+        peaks, _ = find_peaks(peak_signal, distance=min_samples, prominence=20, height=10)
         if len(peaks) >= 2:
+            # Calculate instantaneous respiration rate
+            rr_inst = 60.0/ np.diff(times[peaks][-2:])
+            # Publish the instantaneous respiration rate
+            self.rr_inst_pub.publish(Float32(rr_inst))
+            self.rr_inst_timestamp_pub.publish(Float32(rospy.Time.now().to_sec()))
+            
+            # Calculate average respiration rate
             intervals = np.diff(times[peaks])
             avg_interval = np.mean(intervals)
-            bpm = 60.0 / avg_interval
-            # publish the calculated BPM
-            self.bpm_pub.publish(Float32(bpm))
-            self.bpm_timestamp_pub.publish(Float32(rospy.Time.now().to_sec()))
+            rr_avg = 60.0 / avg_interval
+            # Publish the average respiration rate
+            self.rr_avg_pub.publish(Float32(rr_avg))
+        else:
+            # Not enough peaks detected, reset BPM
+            self.rr_inst_pub.publish(Float32(0.0))
+            self.rr_inst_timestamp_pub.publish(Float32(0.0))
+            self.rr_avg_pub.publish(Float32(0.0))
+        
 
 if __name__ == "__main__":
     try:
