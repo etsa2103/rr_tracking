@@ -2,7 +2,6 @@
 import rospy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32, Bool
-
 from cv_bridge import CvBridge
 
 import time
@@ -17,29 +16,35 @@ def bandpass(data, fs, low=0.1, high=0.7):
             nyq = 0.5 * fs
             b, a = butter(4, [low / nyq, high / nyq], btype='band')
             return filtfilt(b, a, data)
-
+        
+# Maybe use circular mask for signal extraction
+# maybe remove outliers for the final rr avg estimate
 class SimpleBreathTracker:
     def __init__(self):
+        # === Initialize ROS and Subscribers ===
         rospy.init_node("simple_rr_tracker")
         self.bridge = CvBridge()
-
+        rospy.Subscriber("/rr_tracking/image_roi", Image, self.image_cb)
+        
+        rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.stability_cb)
+        self.raw_pub = rospy.Publisher("/rr_tracking/raw_signal", Float32, queue_size=1)
+        self.filtered_pub = rospy.Publisher("/rr_tracking/filtered_signal", Float32, queue_size=1)
+        
+        self.rr_inst_pub = rospy.Publisher("/rr_tracking/rr_inst", Float32, queue_size=1)
+        self.rr_inst_timestamp_pub = rospy.Publisher("/rr_tracking/rr_inst_timestamp", Float32, queue_size=1)
+        self.rr_avg_pub = rospy.Publisher("/rr_tracking/rr_avg", Float32, queue_size=1)
+        
+        # === Initialize Variables ===
         self.frame_rate = 30                  # Hz
         self.buffer_size = 300                # ~10 seconds
-        self.min_peak_distance = 2            # seconds
+        self.min_peak_distance = 0.8            # seconds
+        self.last_baseline = 0.0              # For baseline removal
 
         self.signal_buffer = deque(maxlen=self.buffer_size)
         self.time_buffer = deque(maxlen=1350)
         self.peak_buffer = deque(maxlen=1350)
         
         self.tracking_stable = True
-
-        rospy.Subscriber("/boson/image_roi", Image, self.image_cb)
-        rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.stability_cb)
-        self.raw_pub = rospy.Publisher("/rr_tracking/raw_signal", Float32, queue_size=1)
-        self.filtered_pub = rospy.Publisher("/rr_tracking/filtered_signal", Float32, queue_size=1)
-        self.rr_inst_pub = rospy.Publisher("/rr_tracking/rr_inst", Float32, queue_size=1)
-        self.rr_inst_timestamp_pub = rospy.Publisher("/rr_tracking/rr_inst_timestamp", Float32, queue_size=1)
-        self.rr_avg_pub = rospy.Publisher("/rr_tracking/rr_avg", Float32, queue_size=1)
 
     def stability_cb(self, msg):
         self.tracking_stable = msg.data
@@ -61,8 +66,9 @@ class SimpleBreathTracker:
         now = time.time()
         
         # Add to buffer
-        self.signal_buffer.append(mean_val)
-        self.time_buffer.append(now)
+        if self.tracking_stable:
+            self.signal_buffer.append(mean_val)
+            self.time_buffer.append(now)
         if len(self.signal_buffer) < self.buffer_size:
             return
         signal = np.array(self.signal_buffer)
@@ -70,23 +76,19 @@ class SimpleBreathTracker:
 
         # ====== Clean up raw signal ======
         # Normalize signal
-        baseline = uniform_filter1d(signal, size=90)  # ~3 seconds at 30 Hz
+        baseline = uniform_filter1d(signal, size=120)  # ~4 seconds at 30 Hz
         normalized = signal - baseline
+        self.last_baseline = baseline[-1]
         # clip and Invert signal for peak detection
         inverted = np.clip(-normalized,-100.0, 100.0)
         # Publish the latest raw signal value
         self.raw_pub.publish(Float32(inverted[-1]))
         self.peak_buffer.append(inverted[-1])
         
-        # ====== Filter signal ======
-        filtered = bandpass(inverted, fs=self.frame_rate)
-        # Publish the latest filtered signal value
-        self.filtered_pub.publish(Float32(filtered[-1]))
-        
         # ====== Peak detection ======
         min_samples = int(self.min_peak_distance * self.frame_rate)
         peak_signal = np.array(self.peak_buffer)
-        peaks, _ = find_peaks(peak_signal, distance=min_samples, prominence=15, height=7)
+        peaks, _ = find_peaks(peak_signal, distance=min_samples, prominence=8)
         if len(peaks) >= 2:
             # Calculate instantaneous respiration rate
             rr_inst = 60.0/ np.diff(times[peaks][-2:])

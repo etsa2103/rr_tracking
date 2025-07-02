@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLay
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from PyQt5.QtCore import QTimer, Qt
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Bool
 from cv_bridge import CvBridge
 import pyqtgraph as pg
 
@@ -60,11 +60,14 @@ class RosGui(QWidget):
         # === Initialize ROS and Subscribers ===
         rospy.init_node("gui_node", anonymous=True)
         self.bridge = CvBridge()
-        rospy.Subscriber("/boson/image_annotated", Image, self.image_callback1)
-        rospy.Subscriber("/boson/image_roi", Image, self.image_callback2)
+        rospy.Subscriber("/rr_tracking/image_annotated", Image, self.image_callback1)
+        rospy.Subscriber("/rr_tracking/image_roi", Image, self.image_callback2)
+        
+        rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_callback)
+        rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.tracking_stable_callback)
+        
         rospy.Subscriber("/rr_tracking/rr_inst", Float32, self.rr_inst_callback)
         rospy.Subscriber("/rr_tracking/rr_avg", Float32, self.rr_avg_callback)
-        rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_callback)
 
         # === Initialize Variables ===
         self.img1 = self.img2 = None
@@ -76,9 +79,10 @@ class RosGui(QWidget):
         self.start_time = time.time()
         self.csv_loaded = False
         self.duration_sec = 90
+        self.tracking_stable = True
         
         # === Initialize Plot ===
-        self.plot_y_range = (-70, 70)
+        self.plot_y_range = (-40, 40)
         csv_path = ""#"/home/etsa/boson_recordings/new_tests/fast_shallow/fast_shallow.csv" 
         if csv_path:
             self.load_csv(csv_path)
@@ -98,7 +102,6 @@ class RosGui(QWidget):
             df = pd.read_csv(path)
             times = df["Data Set 1:Time(s)"].dropna().tolist()
             forces = df["Data Set 1:Force(N)"].dropna().tolist()
-            forces = forces*10
             mid = (min(forces) + max(forces)) / 2
             self.time_data = times
             self.csv_data = [f - mid for f in forces]
@@ -110,6 +113,10 @@ class RosGui(QWidget):
             print(f"CSV Error: {e}")
             self.csv_loaded = False
 
+    def tracking_stable_callback(self, msg):
+        self.tracking_stable = msg.data
+        self.update_bpm_label()
+        
     def rr_inst_callback(self, msg):
         self.rr_inst = msg.data
         self.update_bpm_label()
@@ -121,7 +128,8 @@ class RosGui(QWidget):
     def update_bpm_label(self):
         inst = f"{self.rr_inst:.1f}" if self.rr_inst is not None else "--"
         avg = f"{self.rr_avg:.1f}" if self.rr_avg is not None else "--"
-        self.bpm_label.setText(f"BPM: {inst}   AVG: {avg}")
+        tracking = f"{self.tracking_stable:.1f}" if self.tracking_stable is not None else "--"
+        self.bpm_label.setText(f"BPM: {inst}   AVG: {avg} Tracking: {tracking}")
 
     def raw_signal_callback(self, msg):
         t = time.time() - self.start_time
@@ -162,40 +170,49 @@ class RosGui(QWidget):
                 label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def update_plot(self):
-        if self.csv_loaded and self.csv_index < len(self.csv_data):
-            self.csv_curve.setData(self.time_data[:self.csv_index], self.csv_data[:self.csv_index])
-            self.raw_curve.setData(self.raw_times, self.raw_data)
-            self.csv_index += 1
-            self.schedule_next_plot()
-        elif self.csv_loaded:
-            self.reset_graph()
-        else:
-            if self.raw_times:
-                x_start = max(0, self.raw_times[-1] - self.duration_sec)
-                x_end = self.raw_times[-1]
-                self.plot_widget.setXRange(x_start, x_end)
+        try:
+            if self.csv_loaded and self.csv_index < len(self.csv_data):
+                self.csv_curve.setData(self.time_data[:self.csv_index], self.csv_data[:self.csv_index])
+                self.raw_curve.setData(self.raw_times, self.raw_data)
+                self.csv_index += 1
+                self.schedule_next_plot()
+            elif self.csv_loaded:
+                self.reset_graph()
             else:
-                self.plot_widget.setXRange(0, self.duration_sec)
+                if self.raw_times:
+                    x_start = max(0, self.raw_times[-1] - self.duration_sec)
+                    x_end = self.raw_times[-1]
+                    self.plot_widget.setXRange(x_start, x_end)
+                else:
+                    self.plot_widget.setXRange(0, self.duration_sec)
 
-            self.plot_widget.setYRange(self.plot_y_range[0], self.plot_y_range[1])
-            self.raw_curve.setData(self.raw_times, self.raw_data)
-            self.schedule_next_plot()
+                self.plot_widget.setYRange(self.plot_y_range[0], self.plot_y_range[1])
+                self.raw_curve.setData(self.raw_times, self.raw_data)
+                self.schedule_next_plot()
+        except Exception as e:
+            rospy.logerr(f"[GUI] error: {e}")
 
     def schedule_next_plot(self):
-        if self.csv_loaded and self.csv_index < len(self.time_data) - 1:
-            dt = (self.time_data[self.csv_index + 1] - self.time_data[self.csv_index]) * 1000
-            self.graph_timer.start(max(1, int(dt)))
-        else:
-            self.graph_timer.start(1000 // 30)
+        try:
+            if self.csv_loaded and self.csv_index < len(self.time_data) - 1:
+                dt = (self.time_data[self.csv_index + 1] - self.time_data[self.csv_index]) * 1000
+                self.graph_timer.start(max(1, int(dt)))
+            else:
+                self.graph_timer.start(1000 // 30)
+        except Exception as e:
+            rospy.logerr(f"[GUI] error: {e}")
 
     def reset_graph(self):
-        self.csv_index = 0
-        self.start_time = time.time()
-        self.raw_data.clear()
-        self.raw_times.clear()
-        self.csv_curve.setData([], [])
-        self.raw_curve.setData([], [])
-        self.schedule_next_plot()
+        try:
+            self.csv_index = 0
+            self.start_time = time.time()
+            self.raw_data.clear()
+            self.raw_times.clear()
+            self.csv_curve.setData([], [])
+            self.raw_curve.setData([], [])
+            self.schedule_next_plot()
+        except Exception as e:
+            rospy.logerr(f"[GUI] error: {e}")
 
 
 if __name__ == "__main__":

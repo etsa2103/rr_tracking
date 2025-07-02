@@ -40,8 +40,8 @@ class BlazePoseFaceMeshSwitcher:
         self.drawing_spec = self.draw_utils.DrawingSpec(thickness=1, circle_radius=1)
 
         rospy.Subscriber("/boson/image_raw", Image, self.callback)
-        self.image_annotated_pub = rospy.Publisher("/boson/image_annotated", Image, queue_size=1)
-        self.image_roi_pub = rospy.Publisher("/boson/image_roi", Image, queue_size=1)
+        self.image_annotated_pub = rospy.Publisher("/rr_tracking/image_annotated", Image, queue_size=1)
+        self.image_roi_pub = rospy.Publisher("/rr_tracking/image_roi", Image, queue_size=1)
         self.tracking_stable_pub = rospy.Publisher("/rr_tracking/tracking_stable", Bool, queue_size=1)
 
         self.last_mroi_box = None  # Smoothed box
@@ -65,7 +65,7 @@ class BlazePoseFaceMeshSwitcher:
         speed = dist / dt if dt > 0 else 0
 
         # Tweak this threshold experimentally (~20–40 pixels/sec reasonable)
-        return speed < 120
+        return speed < 100
     
     def determine_pose_type(self, landmarks):
         lm = mp.solutions.pose.PoseLandmark
