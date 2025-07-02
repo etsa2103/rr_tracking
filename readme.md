@@ -46,16 +46,17 @@ source devel/setup.bash
 
 ### `rr_tracking`
 - Nodes:
-  - `blaze_pose_node.cpp`
-    - Looks at raw video on `/boson/image_raw` topic and converts from `mono16` to `rgb8` so it can be used in blazePose. 
-    - Runs facial tracking to find keypoints (eyes, nose, and mouth corners). 
-    - Creates an annotated image with box around face and box around nose region and publishes `rgb8` image on `/boson/image_annotated`
+  - `facial_tracking_node.cpp`
+    - Looks at raw video on `/boson/image_raw` topic and converts from `mono16` to `rgb8` so it can be used in facial tracking models. 
+    - Runs blazePose to determine head pose (left, front, right)
+    - Based on pose either run blazePose or faceMesh to determine facial landmarks
+    - Create annotated image with landmarks drawn box and a box around nose region. Published as `rgb8` image on `/boson/image_annotated`
     - Grabs pixels around nose region on raw `mono16` image and and publishes on `/boson/image_roi`
-  - `clahe_filter_node.cpp`
-    - Might use on raw image before pasing to blazePose.
-  - `display_node.cpp`
-    - Custom display that streams images found on `/boson/image_raw`, `/boson/image_annotated`, and `/boson/image_roi` topics.
-  - `rr_tracking_node.cpp`
+  - `gui_node.cpp`
+    - Shows current and average bpm readings
+    - Streams images found on `/boson/image_annotated`, and `/boson/image_roi` topics.
+    - Shows graph of raw signal found on `/rr_tracking/raw_signal` topic and a csv file you can specify with the ground truth data
+  - `signal_processing_node.cpp`
     - Looks at `mono16` video on `/boson/image_roi`.
     - Takes average of pixels to get raw signal
     - Filters signal then extracts resperation rate

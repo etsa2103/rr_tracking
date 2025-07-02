@@ -1,21 +1,16 @@
 <launch>
   <!-- Play the latest thermal recording on loop -->
   <node name="rosbag_play" pkg="rosbag" type="play"
-        args="--loop /home/etsa/boson_recordings/new_tests/slow_shallow/slow_shallow.bag"
+        args="--loop /home/etsa/boson_recordings/new_tests/side_view.bag"
         output="screen" />
 
-  <!-- Run blaze_pose node -->
-  <node pkg="rr_tracking" type="blaze_pose_node.py" name="blaze_pose_node" output="screen" />
+  <!-- Run facial tracking node -->
+  <node pkg="rr_tracking" type="facial_tracking_node.py" name="facial_tracking_node" output="screen" />
 
-  <!-- Run rr_tracking node -->
-  <node pkg="rr_tracking" type="rr_tracking_node.py" name="rr_tracking_node" output="screen" />
+  <!-- Run signal processing node -->
+  <node pkg="rr_tracking" type="signal_processing_node.py" name="signal_processing_node" output="screen" />
 
   <!-- Run the display node -->
   <node pkg="rr_tracking" type="gui_node.py" name="gui_node" 
         output="screen" launch-prefix="python3" />
-  
-  <!-- <node name="rqt_plot" pkg="rqt_plot" type="rqt_plot" 
-  args="/rr_tracking/raw_signal /rr_tracking/rr_avg" 
-  output="screen" /> -->
-
 </launch>

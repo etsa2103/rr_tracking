@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-
 import rospy
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Bool
 
 from cv_bridge import CvBridge
 
 import time
 import numpy as np
 from collections import deque
-
 
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks, detrend, butter, filtfilt
@@ -26,22 +24,35 @@ class SimpleBreathTracker:
         self.bridge = CvBridge()
 
         self.frame_rate = 30                  # Hz
-        self.buffer_size = 450                # ~15 seconds
+        self.buffer_size = 300                # ~10 seconds
         self.min_peak_distance = 2            # seconds
 
         self.signal_buffer = deque(maxlen=self.buffer_size)
         self.time_buffer = deque(maxlen=1350)
         self.peak_buffer = deque(maxlen=1350)
+        
+        self.tracking_stable = True
 
         rospy.Subscriber("/boson/image_roi", Image, self.image_cb)
+        rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.stability_cb)
         self.raw_pub = rospy.Publisher("/rr_tracking/raw_signal", Float32, queue_size=1)
         self.filtered_pub = rospy.Publisher("/rr_tracking/filtered_signal", Float32, queue_size=1)
         self.rr_inst_pub = rospy.Publisher("/rr_tracking/rr_inst", Float32, queue_size=1)
         self.rr_inst_timestamp_pub = rospy.Publisher("/rr_tracking/rr_inst_timestamp", Float32, queue_size=1)
         self.rr_avg_pub = rospy.Publisher("/rr_tracking/rr_avg", Float32, queue_size=1)
-        
 
+    def stability_cb(self, msg):
+        self.tracking_stable = msg.data
+        
     def image_cb(self, msg):
+        # if(not self.tracking_stable):
+        #     # If tracking is not stable, do not process the image
+        #     self.raw_pub.publish(Float32(0.0))
+        #     self.filtered_pub.publish(Float32(0.0))
+        #     self.rr_inst_pub.publish(Float32(0.0))
+        #     self.rr_inst_timestamp_pub.publish(Float32(0.0))
+        #     self.rr_avg_pub.publish(Float32(0.0))
+        #     return
         # Get mean pixel value from image
         img = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
         if img is None or img.size == 0:
@@ -65,7 +76,7 @@ class SimpleBreathTracker:
         inverted = np.clip(-normalized,-100.0, 100.0)
         # Publish the latest raw signal value
         self.raw_pub.publish(Float32(inverted[-1]))
-        self.peak_buffer.append(normalized[-1])
+        self.peak_buffer.append(inverted[-1])
         
         # ====== Filter signal ======
         filtered = bandpass(inverted, fs=self.frame_rate)
@@ -75,7 +86,7 @@ class SimpleBreathTracker:
         # ====== Peak detection ======
         min_samples = int(self.min_peak_distance * self.frame_rate)
         peak_signal = np.array(self.peak_buffer)
-        peaks, _ = find_peaks(peak_signal, distance=min_samples, prominence=20, height=10)
+        peaks, _ = find_peaks(peak_signal, distance=min_samples, prominence=15, height=7)
         if len(peaks) >= 2:
             # Calculate instantaneous respiration rate
             rr_inst = 60.0/ np.diff(times[peaks][-2:])
@@ -94,7 +105,6 @@ class SimpleBreathTracker:
             self.rr_inst_pub.publish(Float32(0.0))
             self.rr_inst_timestamp_pub.publish(Float32(0.0))
             self.rr_avg_pub.publish(Float32(0.0))
-        
 
 if __name__ == "__main__":
     try:

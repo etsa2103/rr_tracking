@@ -1,14 +1,14 @@
-<launch>
+<launch>  
   <!-- Run boson camera live -->
   <include file="$(find boson_camera)/launch/boson640.launch" />
 
-  <!-- Run blaze_pose node -->
-  <node pkg="rr_tracking" type="blaze_pose_node.py" name="blaze_pose_node" output="screen" />
+  <!-- Run facial tracking node -->
+  <node pkg="rr_tracking" type="facial_tracking_node.py" name="facial_tracking_node" output="screen" />
 
-  <!-- Run rr_tracking node -->
-  <node pkg="rr_tracking" type="rr_tracking_node.py" name="rr_tracking_node" output="screen" />
+  <!-- Run signal processing node -->
+  <node pkg="rr_tracking" type="signal_processing_node.py" name="signal_processing_node" output="screen" />
 
-  <!-- Run the display node -->
-  <node pkg="rr_tracking" type="display_node.py" name="display_node" 
+  <!-- Run the GUI node -->
+  <node pkg="rr_tracking" type="gui_node.py" name="gui_node" 
         output="screen" launch-prefix="python3" />
 </launch>
