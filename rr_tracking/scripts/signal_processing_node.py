@@ -68,13 +68,13 @@ class SimpleBreathTracker:
 
         # === Signal Normalization & Filtering ===
         signal = np.array(self.signal_buffer)
-        baseline = uniform_filter1d(signal, size=120)
+        baseline = uniform_filter1d(signal, size=self.frame_rate*4)  # 4 seconds baseline
         normalized = signal - baseline
         self.last_baseline = baseline[-1]
 
         # === Adaptive Parameters Based on Pose ===
-        min_prominence = 10 if self.pose_type in ["left", "right"] else 6
-        clip_range = (-80, 80) if self.pose_type in ["left", "right"] else (-100, 100)
+        min_prominence = 15 if self.pose_type in ["left", "right"] else 8
+        clip_range = (-100, 100) if self.pose_type in ["left", "right"] else (-80, 80)
 
         inverted = np.clip(-normalized, *clip_range)
         self.raw_pub.publish(Float32(inverted[-1]))
