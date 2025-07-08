@@ -1,6 +1,6 @@
 <launch>  
   <!-- Run boson camera live -->
-  <include file="$(find boson_camera)/launch/boson640.launch" />
+  <include file="$(find eeyore_ros)/launch/boson.launch" />
 
   <!-- Run facial tracking node -->
   <node pkg="rr_tracking" type="facial_tracking_node.py" name="facial_tracking_node" output="screen" />
