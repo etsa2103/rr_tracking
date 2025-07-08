@@ -20,7 +20,7 @@ class SimpleBreathTracker:
         self.bridge = CvBridge()
 
         # === Subscribers & Publishers ===
-        rospy.Subscriber("/rr_tracking/image_raw", Image, self.image_raw_cb)
+        rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
         rospy.Subscriber("/rr_tracking/image_roi", Image, self.image_cb)
         rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.stability_cb)
         rospy.Subscriber("/rr_tracking/pose_type", String, self.pose_type_cb)
@@ -46,7 +46,7 @@ class SimpleBreathTracker:
     
     def image_raw_cb(self, msg): 
         try:
-            self.image_raw = self.bridge.imgmsg_to_cv2(msg, 'rgb8')
+            self.image_raw = self.bridge.imgmsg_to_cv2(msg, 'mono16')
         except Exception as e:
             print(f"Image 1 Error: {e}")
             
@@ -55,16 +55,18 @@ class SimpleBreathTracker:
         
         self.image_roi = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
         if self.image_roi is None or self.image_roi.size == 0:
+            rospy.logwarn_throttle(1.0, "[rr_tracking] Empty ROI image received.")
             return
         if self.image_raw is None or self.image_raw.size == 0:
+            rospy.logwarn_throttle(1.0, "[rr_tracking] Empty raw image received.")
             return
 
-        threshold = np.percentile(self.image_raw, 60)
+        threshold = np.percentile(self.image_raw, 70)
         warm_pixels = self.image_roi[self.image_roi > threshold]
 
         # === Edge Cases & Frame Skipping ===
         if not self.tracking_stable or warm_pixels.size == 0 or warm_pixels.mean() < 0.3:
-            rospy.logwarn_throttle(5.0, "[rr_tracking] Unstable or empty ROI — skipping frame.")
+            rospy.logwarn_throttle(1.0, "[rr_tracking] Unstable or empty ROI — skipping frame.")
             return
 
         # === Signal Buffering ===
