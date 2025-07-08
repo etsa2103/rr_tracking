@@ -1,0 +1,6 @@
+<launch>
+
+   <node name="boson" pkg="eeyore_ros" type="boson_node" output="screen" />
+   <rosparam file="$(find eeyore_ros)/config/boson.yaml"/>
+
+</launch>

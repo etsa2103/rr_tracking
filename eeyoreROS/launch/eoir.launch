@@ -1,0 +1,7 @@
+<launch>
+
+    <node name="electro_optical" pkg="eeyore_ros" type="electro_optical_node" output="screen" /> 
+    <node name="boson" pkg="eeyore_ros" type="boson_node" output="screen" />
+    <rosparam file="$(find eeyore_ros)/config/electro_optical.yaml"/>
+    <rosparam file="$(find eeyore_ros)/config/boson.yaml"/>
+</launch>
