@@ -9,7 +9,7 @@ from std_msgs.msg import Bool, String
 from cv_bridge import CvBridge
 
 # === Utility Functions ===
-def valid_landmark(lm, threshold=0.5):
+def valid_landmark(lm, threshold=0.6):
     return lm.visibility > threshold if hasattr(lm, 'visibility') else lm.visibility == 0 or lm.presence > threshold
 
 def smooth_box(prev_box, new_box, alpha=0.3):
@@ -161,12 +161,22 @@ class BlazePoseFaceMeshSwitcher:
             if self.last_mroi_box:
                 x_min, y_min, x_max, y_max = self.last_mroi_box
                 cv2.rectangle(annotated_image, (x_min, y_min), (x_max, y_max), (255, 0, 0), 1)
-                roi = image_raw[y_min:y_max, x_min:x_max]
-                if roi.size > 0:
-                    roi_msg = self.bridge.cv2_to_imgmsg(roi, encoding='mono16')
+
+                roi_raw = image_raw[y_min:y_max, x_min:x_max]
+
+                if roi_raw.size > 0:
+                    # Warm mask
+                    threshold = np.percentile(image_raw, 60)
+                    warm_mask = roi_raw < threshold
+
+                    # Force warm pixels to red
+                    roi_raw[warm_mask] = [0, 0, 255]
+
+                    # Publish RGB image
+                    roi_msg = self.bridge.cv2_to_imgmsg(roi_raw, encoding='mono16')
                     roi_msg.header = msg.header
                     self.image_roi_pub.publish(roi_msg)
-
+            
             annotated_msg = self.bridge.cv2_to_imgmsg(annotated_image, encoding='rgb8')
             annotated_msg.header = msg.header
             self.image_annotated_pub.publish(annotated_msg)

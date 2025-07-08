@@ -82,7 +82,7 @@ class RosGui(QWidget):
         self.tracking_stable = True
         
         # === Initialize Plot ===
-        self.plot_y_range = (-40, 40)
+        self.plot_y_range = (-100, 100)
         csv_path = ""#"/home/etsa/boson_recordings/new_tests/fast_shallow/fast_shallow.csv" 
         if csv_path:
             self.load_csv(csv_path)
@@ -146,10 +146,10 @@ class RosGui(QWidget):
 
     def image_callback2(self, msg):
         try:
-            mono16 = self.bridge.imgmsg_to_cv2(msg, 'mono16')
+            mono16 = self.bridge.imgmsg_to_cv2(msg, 'rgb8')
             ptp = mono16.ptp()
             norm = ((mono16 - mono16.min()) / ptp * 255).astype(np.uint8) if ptp > 0 else np.zeros_like(mono16, dtype=np.uint8)
-            self.img2 = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
+            self.img2 = mono16#cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
         except Exception as e:
             print(f"Image 2 Error: {e}")
 
