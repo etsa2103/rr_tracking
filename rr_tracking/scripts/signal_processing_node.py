@@ -8,6 +8,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Float32, Bool, String, UInt8
 from scipy.ndimage import uniform_filter1d
 from scipy.signal import butter, filtfilt, find_peaks
+import matplotlib.pyplot as plt
 
 def bandpass(data, fs, low=0.1, high=0.7):
     nyq = 0.5 * fs
@@ -62,7 +63,7 @@ class SimpleBreathTracker:
         self.image_roi = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
         if self.recording:
             self.recorded_roi_images.append(self.image_roi.copy())
-            if time.time() - self.record_start_time >= 10:
+            if time.time() - self.record_start_time >= 20:
                 self.recording = False
                 rospy.loginfo("Finished recording. Processing...")
                 self.process_recorded_data()
@@ -187,6 +188,20 @@ class SimpleBreathTracker:
 
             # Optional: publish raw signal after processing (last value)
             #self.raw_pub.publish(Float32(inverted[-1]))
+        # === OPTIONAL: Plot the processed signal with peaks ===
+        try:
+            plt.figure(figsize=(10, 4))
+            plt.plot(timestamps, inverted, label="Filtered Signal", color="blue")
+            plt.plot(np.array(timestamps)[peaks], inverted[peaks], "rx", label="Detected Peaks")
+            plt.title("Recorded Breathing Signal (Processed)")
+            plt.xlabel("Time (s)")
+            plt.ylabel("Signal Amplitude")
+            plt.legend()
+            plt.tight_layout()
+            plt.grid(True)
+            plt.show()  # or plt.savefig("/tmp/rr_plot.png") to save instead
+        except Exception as e:
+            rospy.logwarn(f"Failed to plot signal: {e}")
 
 
 if __name__ == "__main__":
