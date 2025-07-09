@@ -34,7 +34,8 @@ class BlazePoseFaceMeshSwitcher:
         self.drawing_spec = self.draw_utils.DrawingSpec(thickness=1, circle_radius=1)
 
         # === ROS Publishers/Subscribers ===
-        rospy.Subscriber("/boson/image_raw", Image, self.callback)
+        # rospy.Subscriber("/boson/image_raw", Image, self.callback)
+        rospy.Subscriber("/camera/boson", Image, self.callback)
         self.image_annotated_pub = rospy.Publisher("/rr_tracking/image_annotated", Image, queue_size=1)
         self.image_roi_pub = rospy.Publisher("/rr_tracking/image_roi", Image, queue_size=1)
         self.tracking_stable_pub = rospy.Publisher("/rr_tracking/tracking_stable", Bool, queue_size=1)
