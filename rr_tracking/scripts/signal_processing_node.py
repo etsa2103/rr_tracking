@@ -20,6 +20,7 @@ class SimpleBreathTracker:
         self.bridge = CvBridge()
 
         # === Subscribers & Publishers ===
+        rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
         rospy.Subscriber("/rr_tracking/image_roi", Image, self.image_cb)
         rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.stability_cb)
         rospy.Subscriber("/rr_tracking/pose_type", String, self.pose_type_cb)
@@ -29,9 +30,10 @@ class SimpleBreathTracker:
         self.rr_avg_pub = rospy.Publisher("/rr_tracking/rr_avg", Float32, queue_size=1)
 
         # === Runtime State ===
+        self.image_raw = None
+        self.image_roi = None
         self.frame_rate = 30
         self.min_peak_distance = 0.8
-        self.last_baseline = 0.0
         self.tracking_stable = True
         self.pose_type = "unknown"
 
@@ -41,19 +43,34 @@ class SimpleBreathTracker:
 
     def stability_cb(self, msg): self.tracking_stable = msg.data
     def pose_type_cb(self, msg): self.pose_type = msg.data
-
+    
+    def image_raw_cb(self, msg): 
+        try:
+            self.image_raw = self.bridge.imgmsg_to_cv2(msg, 'mono16')
+        except Exception as e:
+            print(f"Image 1 Error: {e}")
+            
     def image_cb(self, msg):
-        # === Decode & Preprocess ROI ===
-        img = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
-        if img is None or img.size == 0:
+        # === Decode ROI ===
+        self.image_roi = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
+        if self.image_roi is None or self.image_roi.size == 0:
+            rospy.logwarn_throttle(1.0, "[rr_tracking] Empty ROI image received.")
             return
-
-        threshold = np.percentile(img, 50)
-        warm_pixels = img[img > threshold]
+        if self.image_raw is None or self.image_raw.size == 0:
+            rospy.logwarn_throttle(1.0, "[rr_tracking] Empty raw image received.")
+            return
+        
+        # === ROI Masking & Warm Pixel Extraction ===
+        use_mask = rospy.get_param("/rr_tracking/use_mask", True)
+        if use_mask:
+            threshold = np.percentile(self.image_raw, 70)
+            warm_pixels = self.image_roi[self.image_roi > threshold]
+        else:
+            warm_pixels = self.image_roi.flatten()
 
         # === Edge Cases & Frame Skipping ===
         if not self.tracking_stable or warm_pixels.size == 0 or warm_pixels.mean() < 0.3:
-            rospy.logwarn_throttle(5.0, "[rr_tracking] Unstable or empty ROI — skipping frame.")
+            rospy.logwarn_throttle(1.0, "[rr_tracking] Unstable or empty ROI — skipping frame.")
             return
 
         # === Signal Buffering ===
@@ -70,19 +87,15 @@ class SimpleBreathTracker:
         signal = np.array(self.signal_buffer)
         baseline = uniform_filter1d(signal, size=self.frame_rate*4)  # 4 seconds baseline
         normalized = signal - baseline
-        self.last_baseline = baseline[-1]
+        test = (-100, 100)
+        inverted = np.clip(-normalized, *test)  # Clip to avoid extreme values
+        self.raw_pub.publish(Float32(inverted[-1]))   # Publish the latest raw signal value
+        self.peak_buffer.append(inverted[-1])         # Store the latest value for peak detection
 
-        # === Adaptive Parameters Based on Pose ===
-        min_prominence = 15 if self.pose_type in ["left", "right"] else 8
-        clip_range = (-100, 100) if self.pose_type in ["left", "right"] else (-80, 80)
-
-        inverted = np.clip(-normalized, *clip_range)
-        self.raw_pub.publish(Float32(inverted[-1]))
-        self.peak_buffer.append(inverted[-1])
-
-        # === Peak Detection & Respiration Rate Estimation ===
+        # === Adaptive Peak Detection & Respiration Rate Estimation ===
         peak_signal = np.array(self.peak_buffer)
         min_samples = int(self.min_peak_distance * self.frame_rate)
+        min_prominence = 15 if self.pose_type in ["left", "right"] else 8
         peaks, _ = find_peaks(peak_signal, distance=min_samples, prominence=min_prominence)
 
         if len(peaks) >= 2 and len(self.time_buffer) >= len(peak_signal):

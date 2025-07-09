@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys, time, rospy, cv2
 import pandas as pd, numpy as np
-from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout
+from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from PyQt5.QtCore import QTimer, Qt
 from sensor_msgs.msg import Image
@@ -15,6 +15,10 @@ class RosGui(QWidget):
         super().__init__()
         self.setWindowTitle("Resperatory Rate Tracking GUI")
         self.resize(1400, 1000)
+        
+        self.mask_checkbox = QCheckBox("Use Background Mask")
+        self.mask_checkbox.setChecked(rospy.get_param("/rr_tracking/use_mask", False))
+        self.mask_checkbox.stateChanged.connect(self.toggle_mask)
 
         # === BPM Display ===
         self.bpm_label = QLabel("BPM: --   AVG: --")
@@ -55,13 +59,15 @@ class RosGui(QWidget):
         layout.addWidget(self.bpm_label)
         layout.addLayout(video_layout)
         layout.addWidget(self.plot_widget)
+        layout.addWidget(self.mask_checkbox)
         self.setLayout(layout)
 
         # === Initialize ROS and Subscribers ===
         rospy.init_node("gui_node", anonymous=True)
         self.bridge = CvBridge()
-        rospy.Subscriber("/rr_tracking/image_annotated", Image, self.image_callback1)
-        rospy.Subscriber("/rr_tracking/image_roi", Image, self.image_callback2)
+        rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
+        rospy.Subscriber("/rr_tracking/image_annotated", Image, self.image_annotated_cb)
+        rospy.Subscriber("/rr_tracking/image_roi", Image, self.image_roi_cb)
         
         rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_callback)
         rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.tracking_stable_callback)
@@ -70,7 +76,7 @@ class RosGui(QWidget):
         rospy.Subscriber("/rr_tracking/rr_avg", Float32, self.rr_avg_callback)
 
         # === Initialize Variables ===
-        self.img1 = self.img2 = None
+        self.img_raw = self.img_annotated = self.img_roi = None
         self.rr_inst = None
         self.rr_avg = None
         self.csv_data = self.time_data = []
@@ -82,7 +88,7 @@ class RosGui(QWidget):
         self.tracking_stable = True
         
         # === Initialize Plot ===
-        self.plot_y_range = (-40, 40)
+        self.plot_y_range = (-100, 100)
         csv_path = ""#"/home/etsa/boson_recordings/new_tests/fast_shallow/fast_shallow.csv" 
         if csv_path:
             self.load_csv(csv_path)
@@ -96,6 +102,9 @@ class RosGui(QWidget):
         self.graph_timer = QTimer(timeout=self.update_plot)
         self.graph_timer.setSingleShot(True)
         self.schedule_next_plot()
+    def toggle_mask(self, state):
+        mask_enabled = state == Qt.Checked
+        rospy.set_param("/rr_tracking/use_mask", mask_enabled)
 
     def load_csv(self, path):
         try:
@@ -137,29 +146,52 @@ class RosGui(QWidget):
         self.raw_data.append(msg.data)
         self.raw_data = self.raw_data[-2000:]
         self.raw_times = self.raw_times[-2000:]
-
-    def image_callback1(self, msg):
+        
+    def image_raw_cb(self, msg):
         try:
-            self.img1 = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+            self.img_raw = self.bridge.imgmsg_to_cv2(msg, 'mono16')
         except Exception as e:
-            print(f"Image 1 Error: {e}")
-
-    def image_callback2(self, msg):
+            print(f"Raw Image Error: {e}")
+            
+    def image_annotated_cb(self, msg):
         try:
-            mono16 = self.bridge.imgmsg_to_cv2(msg, 'mono16')
-            ptp = mono16.ptp()
-            norm = ((mono16 - mono16.min()) / ptp * 255).astype(np.uint8) if ptp > 0 else np.zeros_like(mono16, dtype=np.uint8)
-            self.img2 = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
+            self.img_annotated = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
         except Exception as e:
-            print(f"Image 2 Error: {e}")
+            print(f"annotated image Error: {e}")
 
+    def image_roi_cb(self, msg):
+        try:
+            mask_enabled = rospy.get_param("/rr_tracking/use_mask", True)
+            if mask_enabled:
+                mono16 = self.bridge.imgmsg_to_cv2(msg, 'mono16')
+        
+                # Use grayscale for mask
+                threshold = np.percentile(self.img_raw, 70)
+                warm_mask = mono16 < threshold  # Shape: (H, W)
+                ptp = mono16.ptp()
+                norm = ((mono16 - mono16.min()) / ptp * 255).astype(np.uint8) if ptp > 0 else np.zeros_like(mono16, dtype=np.uint8)
+
+                # Convert to RGB for display
+                self.img_roi = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
+                
+                # Apply red color to RGB image where mask is true
+                self.img_roi[warm_mask] = [0, 0, 255]
+            else:
+                mono16 = self.bridge.imgmsg_to_cv2(msg, 'mono16')
+                ptp = mono16.ptp()
+                norm = ((mono16 - mono16.min()) / ptp * 255).astype(np.uint8) if ptp > 0 else np.zeros_like(mono16, dtype=np.uint8)
+                self.img_roi = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
+
+        except Exception as e:
+            print(f"roi image Error: {e}")
+            
     def update_gui(self):
-        self.show_image(self.img1, self.image1_label)
-        if self.img1 is not None and self.img2 is not None:
-            resized = cv2.resize(self.img2, self.img1.shape[1::-1])
+        self.show_image(self.img_annotated, self.image1_label)
+        if self.img_annotated is not None and self.img_roi is not None:
+            resized = cv2.resize(self.img_roi, self.img_annotated.shape[1::-1])
             self.show_image(resized, self.image2_label)
         else:
-            self.show_image(self.img2, self.image2_label)
+            self.show_image(self.img_roi, self.image2_label)
 
     def show_image(self, img, label):
         if img is not None:
@@ -177,7 +209,10 @@ class RosGui(QWidget):
                 self.csv_index += 1
                 self.schedule_next_plot()
             elif self.csv_loaded:
-                self.reset_graph()
+                # Stop updating when done
+                self.csv_curve.setData(self.time_data, self.csv_data)
+                self.raw_curve.setData(self.raw_times, self.raw_data)
+                self.graph_timer.stop()
             else:
                 if self.raw_times:
                     x_start = max(0, self.raw_times[-1] - self.duration_sec)

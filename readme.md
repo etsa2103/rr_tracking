@@ -68,5 +68,6 @@ source devel/setup.bash
 - [ ] Improve facial tracking
 - [ ] Improve signal filtering
 - [ ] Test in different environments on different people
-
+## BUGS
+- when peak buffer fills the gui freezes
 ---
