@@ -166,7 +166,8 @@ class RosGui(QWidget):
                 mono16 = self.bridge.imgmsg_to_cv2(msg, 'mono16')
         
                 # Use grayscale for mask
-                threshold = np.percentile(self.img_raw, 70)
+                #threshold = np.percentile(self.img_raw, 70)
+                threshold = 13000  # Adjusted threshold for warm pixel detection
                 warm_mask = mono16 < threshold  # Shape: (H, W)
                 ptp = mono16.ptp()
                 norm = ((mono16 - mono16.min()) / ptp * 255).astype(np.uint8) if ptp > 0 else np.zeros_like(mono16, dtype=np.uint8)

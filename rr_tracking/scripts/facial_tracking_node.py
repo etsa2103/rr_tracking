@@ -3,9 +3,10 @@
 import rospy
 import numpy as np
 import cv2
+import time
 import mediapipe as mp
 from sensor_msgs.msg import Image
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, UInt8
 from cv_bridge import CvBridge
 
 # === Utility Functions ===
@@ -34,17 +35,79 @@ class BlazePoseFaceMeshSwitcher:
         self.drawing_spec = self.draw_utils.DrawingSpec(thickness=1, circle_radius=1)
 
         # === ROS Publishers/Subscribers ===
-        rospy.Subscriber("/boson/image_raw", Image, self.callback)
+        rospy.Subscriber("/boson/image_raw", Image, self.image_cb)
         self.image_annotated_pub = rospy.Publisher("/rr_tracking/image_annotated", Image, queue_size=1)
         self.image_roi_pub = rospy.Publisher("/rr_tracking/image_roi", Image, queue_size=1)
         self.tracking_stable_pub = rospy.Publisher("/rr_tracking/tracking_stable", Bool, queue_size=1)
         self.pose_type_pub = rospy.Publisher("/rr_tracking/pose_type", String, queue_size=1)
-
+        
         # === State ===
         self.last_pose_type = "unknown"
         self.last_mroi_box = None
         self.last_mroi_time = None
+            
+    # === Image Callback ===
+    def image_cb(self, msg):
+        try:
+            image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
+            norm = ((image_raw - np.min(image_raw)) / (np.ptp(image_raw) + 1e-5) * 255).astype(np.uint8)
+            image_rgb = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
+            h, w, _ = image_rgb.shape
+            now = rospy.get_time()
 
+            pose_result = self.pose_detector.process(image_rgb)
+            if not pose_result.pose_landmarks:
+                return
+
+            pose_landmarks = pose_result.pose_landmarks.landmark
+            pose_type = self.determine_pose_type(pose_landmarks)
+            self.last_pose_type = pose_type
+            self.pose_type_pub.publish(pose_type)
+
+            annotated_image = image_rgb.copy()
+            mroi_box = None
+
+            # === Landmark Extraction Based on Pose Type ===
+            if pose_type in ['left', 'right']:
+                self.draw_utils.draw_landmarks(
+                    annotated_image, pose_result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
+                mroi_box = self.get_box_from_blazepose(pose_landmarks, pose_type, w, h)
+            elif pose_type == 'frontal':
+                face_result = self.face_mesh.process(image_rgb)
+                if face_result.multi_face_landmarks:
+                    landmarks = face_result.multi_face_landmarks[0]
+                    self.draw_utils.draw_landmarks(
+                        annotated_image, landmarks, mp.solutions.face_mesh.FACEMESH_CONTOURS,
+                        self.drawing_spec, self.drawing_spec)
+                    mroi_box = self.get_box_from_facemesh(landmarks.landmark, w, h)
+
+            # === Stability Check + ROI Publishing ===
+            if mroi_box is not None:
+                stable = self.estimate_stability(mroi_box, now)
+                self.tracking_stable_pub.publish(Bool(stable))
+                self.last_mroi_box = smooth_box(self.last_mroi_box, mroi_box)
+                self.last_mroi_time = now
+            else:
+                self.tracking_stable_pub.publish(Bool(False))
+
+            # === ROI Cropping + Image Publishing ===
+            if self.last_mroi_box:
+                x_min, y_min, x_max, y_max = self.last_mroi_box
+                cv2.rectangle(annotated_image, (x_min, y_min), (x_max, y_max), (255, 0, 0), 1)
+                roi = image_raw[y_min:y_max, x_min:x_max]
+                if roi.size > 0:
+                    roi_msg = self.bridge.cv2_to_imgmsg(roi, encoding='mono16')
+                    roi_msg.header = msg.header
+                    self.image_roi_pub.publish(roi_msg)
+
+            annotated_msg = self.bridge.cv2_to_imgmsg(annotated_image, encoding='rgb8')
+            annotated_msg.header = msg.header
+            self.image_annotated_pub.publish(annotated_msg)
+
+        except Exception as e:
+            rospy.logerr(f"[PoseSwitcherNode] Error: {e}")
+            
+    # ===================================== Helper Functions =====================================
     # === Stability Estimation ===
     def estimate_stability(self, new_box, now):
         if self.last_mroi_box is None or self.last_mroi_time is None:
@@ -112,68 +175,7 @@ class BlazePoseFaceMeshSwitcher:
         fw = int(abs(right.x - left.x) * w * 0.25)
         fh = int(abs(chin.y - nose.y) * h * 0.4)
         return (max(cx - fw // 2, 0), max(cy - fh // 4, 0), min(cx + fw // 2, w), min(cy + fh * 3 // 4, h))
-
-    # === Image Callback ===
-    def callback(self, msg):
-        try:
-            image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
-            norm = ((image_raw - np.min(image_raw)) / (np.ptp(image_raw) + 1e-5) * 255).astype(np.uint8)
-            image_rgb = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
-            h, w, _ = image_rgb.shape
-            now = rospy.get_time()
-
-            pose_result = self.pose_detector.process(image_rgb)
-            if not pose_result.pose_landmarks:
-                return
-
-            pose_landmarks = pose_result.pose_landmarks.landmark
-            pose_type = self.determine_pose_type(pose_landmarks)
-            self.last_pose_type = pose_type
-            self.pose_type_pub.publish(pose_type)
-
-            annotated_image = image_rgb.copy()
-            mroi_box = None
-
-            # === Landmark Extraction Based on Pose Type ===
-            if pose_type in ['left', 'right']:
-                self.draw_utils.draw_landmarks(
-                    annotated_image, pose_result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
-                mroi_box = self.get_box_from_blazepose(pose_landmarks, pose_type, w, h)
-            elif pose_type == 'frontal':
-                face_result = self.face_mesh.process(image_rgb)
-                if face_result.multi_face_landmarks:
-                    landmarks = face_result.multi_face_landmarks[0]
-                    self.draw_utils.draw_landmarks(
-                        annotated_image, landmarks, mp.solutions.face_mesh.FACEMESH_CONTOURS,
-                        self.drawing_spec, self.drawing_spec)
-                    mroi_box = self.get_box_from_facemesh(landmarks.landmark, w, h)
-
-            # === Stability Check + ROI Publishing ===
-            if mroi_box is not None:
-                stable = self.estimate_stability(mroi_box, now)
-                self.tracking_stable_pub.publish(Bool(stable))
-                self.last_mroi_box = smooth_box(self.last_mroi_box, mroi_box)
-                self.last_mroi_time = now
-            else:
-                self.tracking_stable_pub.publish(Bool(False))
-
-            # === ROI Cropping + Image Publishing ===
-            if self.last_mroi_box:
-                x_min, y_min, x_max, y_max = self.last_mroi_box
-                cv2.rectangle(annotated_image, (x_min, y_min), (x_max, y_max), (255, 0, 0), 1)
-                roi = image_raw[y_min:y_max, x_min:x_max]
-                if roi.size > 0:
-                    roi_msg = self.bridge.cv2_to_imgmsg(roi, encoding='mono16')
-                    roi_msg.header = msg.header
-                    self.image_roi_pub.publish(roi_msg)
-
-            annotated_msg = self.bridge.cv2_to_imgmsg(annotated_image, encoding='rgb8')
-            annotated_msg.header = msg.header
-            self.image_annotated_pub.publish(annotated_msg)
-
-        except Exception as e:
-            rospy.logerr(f"[PoseSwitcherNode] Error: {e}")
-
+    
 # === Main ===
 if __name__ == "__main__":
     BlazePoseFaceMeshSwitcher()
