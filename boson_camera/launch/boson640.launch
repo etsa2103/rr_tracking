@@ -6,7 +6,8 @@
 
     <arg name="respawn" default="false" />
     <arg name="debug" default="false" />
-	<arg name="device_id" default="/dev/v4l/by-id/usb-FLIR_Boson_431186-video-index0"/>
+    <arg name="device_id" default="/dev/video0"/>
+	<!-- <arg name="device_id" default="/dev/v4l/by-id/usb-FLIR_Boson_431186-video-index0"/> -->
     <!-- <arg name="device_id" default="/dev/v4l/by-id/usb-FLIR_Boson_30742-video-index0"/> -->
     
     <arg unless="$(arg debug)" name="launch_prefix" value="" />
