@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+<!-- Run boson camera live -->
+  <include file="$(find boson_camera)/launch/boson640.launch" />
+
+<!-- Run the gui node -->
+  <node pkg="rr_tracking" type="gui_node.py" name="gui_node" 
+        output="screen" launch-prefix="python3" />
+</launch>
