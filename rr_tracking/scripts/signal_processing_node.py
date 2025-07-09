@@ -10,20 +10,24 @@ from scipy.ndimage import uniform_filter1d
 from scipy.signal import butter, filtfilt, find_peaks
 import matplotlib.pyplot as plt
 
+# ===================================
+# ======== Utility Functions ========
+# ===================================
 def bandpass(data, fs, low=0.1, high=0.7):
     nyq = 0.5 * fs
     b, a = butter(4, [low / nyq, high / nyq], btype='band')
     return filtfilt(b, a, data)
 
-class SimpleBreathTracker:
+# === Main Signal Processing Class ===
+class SignalProcessingNode:
     def __init__(self):
         rospy.init_node("simple_rr_tracker")
         self.bridge = CvBridge()
 
-        # === Subscribers & Publishers ===
-        rospy.Subscriber("/rr_tracking/image_roi", Image, self.image_roi_cb)
-        rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.stability_cb)
-        rospy.Subscriber("/rr_tracking/pose_type", String, self.pose_type_cb)
+        # Subscribers & Publishers
+        rospy.Subscriber("/facial_tracking/image_roi", Image, self.image_roi_cb)
+        rospy.Subscriber("/facial_tracking/tracking_stable", Bool, self.stability_cb)
+        rospy.Subscriber("/facial_tracking/pose_type", String, self.pose_type_cb)
         rospy.Subscriber('/jackal_teleop/trigger', UInt8, self.trigger_cb)
 
         self.raw_pub = rospy.Publisher("/rr_tracking/raw_signal", Float32, queue_size=1)
@@ -32,7 +36,7 @@ class SimpleBreathTracker:
         self.rr_final_pub = rospy.Publisher("/rr_tracking/rr_final", Float32, queue_size=1)
 
 
-        # === Runtime State ===
+        # Runtime State
         self.recording = False
         self.recorded_raw_images = []
         self.recorded_roi_images = []
@@ -48,15 +52,20 @@ class SimpleBreathTracker:
         self.signal_buffer = deque(maxlen=self.frame_rate*10) # 10 seconds of signal data
         self.time_buffer = deque(maxlen=self.frame_rate*45) # 45 seconds of timestamps
         self.peak_buffer = deque(maxlen=self.frame_rate*45) # 45 seconds of peaks
-        
+    
+    # ================================================================================================================================      
+    # ====================================================== Callback Functions ======================================================
+    # ================================================================================================================================
+    
     def trigger_cb(self, msg):
         if msg.data == 1 and not self.recording:
             self.recording = True
             self.recorded_roi_images = []
             self.record_start_time = time.time()
-            rospy.loginfo("Started recording 10 seconds of frames.")  
+            rospy.loginfo("Started recording 20 seconds of frames.")  
             
     def stability_cb(self, msg): self.tracking_stable = msg.data
+    
     def pose_type_cb(self, msg): self.pose_type = msg.data
 
     def image_roi_cb(self, msg):
@@ -128,7 +137,10 @@ class SimpleBreathTracker:
             self.rr_inst_pub.publish(Float32(0.0))
             self.rr_avg_pub.publish(Float32(0.0))
             
-            
+    # ================================================================================================================================      
+    # ======================================================= Helper Functions =======================================================
+    # ================================================================================================================================
+    
     def process_recorded_data(self):
         if not self.recorded_roi_images:
             rospy.logwarn("No recorded frames to process.")
@@ -203,10 +215,10 @@ class SimpleBreathTracker:
         except Exception as e:
             rospy.logwarn(f"Failed to plot signal: {e}")
 
-
+# ========= Main =========
 if __name__ == "__main__":
     try:
-        SimpleBreathTracker()
+        SignalProcessingNode()
         rospy.spin()
     except rospy.ROSInterruptException:
         pass

@@ -3,13 +3,14 @@
 import rospy
 import numpy as np
 import cv2
-import time
 import mediapipe as mp
 from sensor_msgs.msg import Image
-from std_msgs.msg import Bool, String, UInt8
+from std_msgs.msg import Bool, String
 from cv_bridge import CvBridge
 
-# === Utility Functions ===
+# ===================================
+# ======== Utility Functions ========
+# ===================================
 def valid_landmark(lm, threshold=0.5):
     return lm.visibility > threshold if hasattr(lm, 'visibility') else lm.visibility == 0 or lm.presence > threshold
 
@@ -19,55 +20,63 @@ def smooth_box(prev_box, new_box, alpha=0.3):
     return tuple([int(prev_box[i] * (1 - alpha) + new_box[i] * alpha) for i in range(4)])
 
 # === Main Tracker Class ===
-class BlazePoseFaceMeshSwitcher:
+class FacialTrackingNode:
     def __init__(self):
-        # === ROS and Model Setup ===
-        rospy.init_node("blazepose_facemesh_node")
+        # ROS and Model Setup
+        rospy.init_node("facial_tracking_node")
         self.bridge = CvBridge()
-
         self.pose_detector = mp.solutions.pose.Pose(
-            static_image_mode=False, model_complexity=1, min_detection_confidence=0.6)
+            static_image_mode=False, 
+            model_complexity=1, 
+            min_detection_confidence=0.6)
         self.face_mesh = mp.solutions.face_mesh.FaceMesh(
-            static_image_mode=False, max_num_faces=1, refine_landmarks=True,
-            min_detection_confidence=0.5, min_tracking_confidence=0.5)
-
+            static_image_mode=False, 
+            max_num_faces=1, 
+            refine_landmarks=True,
+            min_detection_confidence=0.5, 
+            min_tracking_confidence=0.5)
         self.draw_utils = mp.solutions.drawing_utils
         self.drawing_spec = self.draw_utils.DrawingSpec(thickness=1, circle_radius=1)
 
-        # === ROS Publishers/Subscribers ===
-        rospy.Subscriber("/boson/image_raw", Image, self.image_cb)
-        self.image_annotated_pub = rospy.Publisher("/rr_tracking/image_annotated", Image, queue_size=1)
-        self.image_roi_pub = rospy.Publisher("/rr_tracking/image_roi", Image, queue_size=1)
-        self.tracking_stable_pub = rospy.Publisher("/rr_tracking/tracking_stable", Bool, queue_size=1)
-        self.pose_type_pub = rospy.Publisher("/rr_tracking/pose_type", String, queue_size=1)
+        # ROS Publishers/Subscribers
+        rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
+        self.image_annotated_pub = rospy.Publisher("/facial_tracking/image_annotated", Image, queue_size=1)
+        self.image_roi_pub = rospy.Publisher("/facial_tracking/image_roi", Image, queue_size=1)
+        self.tracking_stable_pub = rospy.Publisher("/facial_tracking/tracking_stable", Bool, queue_size=1)
+        self.pose_type_pub = rospy.Publisher("/facial_tracking/pose_type", String, queue_size=1)
         
-        # === State ===
+        # State 
         self.last_pose_type = "unknown"
         self.last_mroi_box = None
         self.last_mroi_time = None
-            
-    # === Image Callback ===
-    def image_cb(self, msg):
+    
+    # ================================================================================================================================      
+    # ====================================================== Callback Functions ======================================================
+    # ================================================================================================================================
+    
+    # ==== Image Callback =====
+    def image_raw_cb(self, msg):
         try:
+            # === Process the incoming image ===
             image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
             norm = ((image_raw - np.min(image_raw)) / (np.ptp(image_raw) + 1e-5) * 255).astype(np.uint8)
             image_rgb = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
+            # Get image dimensions and current time
             h, w, _ = image_rgb.shape
             now = rospy.get_time()
-
+            
+            # === Pose Detection ===
             pose_result = self.pose_detector.process(image_rgb)
             if not pose_result.pose_landmarks:
                 return
-
             pose_landmarks = pose_result.pose_landmarks.landmark
             pose_type = self.determine_pose_type(pose_landmarks)
             self.last_pose_type = pose_type
             self.pose_type_pub.publish(pose_type)
 
+            # === Landmark Extraction Based on Pose Type ===
             annotated_image = image_rgb.copy()
             mroi_box = None
-
-            # === Landmark Extraction Based on Pose Type ===
             if pose_type in ['left', 'right']:
                 self.draw_utils.draw_landmarks(
                     annotated_image, pose_result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
@@ -81,7 +90,7 @@ class BlazePoseFaceMeshSwitcher:
                         self.drawing_spec, self.drawing_spec)
                     mroi_box = self.get_box_from_facemesh(landmarks.landmark, w, h)
 
-            # === Stability Check + ROI Publishing ===
+            # === Stability Check (Publish results) ===
             if mroi_box is not None:
                 stable = self.estimate_stability(mroi_box, now)
                 self.tracking_stable_pub.publish(Bool(stable))
@@ -90,7 +99,7 @@ class BlazePoseFaceMeshSwitcher:
             else:
                 self.tracking_stable_pub.publish(Bool(False))
 
-            # === ROI Cropping + Image Publishing ===
+            # === ROI Cropping (Publish results) ===
             if self.last_mroi_box:
                 x_min, y_min, x_max, y_max = self.last_mroi_box
                 cv2.rectangle(annotated_image, (x_min, y_min), (x_max, y_max), (255, 0, 0), 1)
@@ -106,9 +115,12 @@ class BlazePoseFaceMeshSwitcher:
 
         except Exception as e:
             rospy.logerr(f"[PoseSwitcherNode] Error: {e}")
-            
-    # ===================================== Helper Functions =====================================
-    # === Stability Estimation ===
+      
+    # ================================================================================================================================      
+    # ======================================================= Helper Functions =======================================================
+    # ================================================================================================================================
+    
+    # ========= Stability Estimation =========
     def estimate_stability(self, new_box, now):
         if self.last_mroi_box is None or self.last_mroi_time is None:
             return True
@@ -117,7 +129,7 @@ class BlazePoseFaceMeshSwitcher:
         speed = np.linalg.norm([cx2 - cx1, cy2 - cy1]) / (now - self.last_mroi_time + 1e-5)
         return speed < 100
 
-    # === Pose Type Classification ===
+    # ====== Pose Type Classification ======
     def determine_pose_type(self, landmarks):
         lm = mp.solutions.pose.PoseLandmark
         try:
@@ -136,7 +148,7 @@ class BlazePoseFaceMeshSwitcher:
         rel_pos = proj / np.linalg.norm(eye_vec)
         return 'frontal' if 0.25 <= rel_pos <= 0.75 else 'right' if rel_pos < 0.25 else 'left'
 
-    # === Box Estimation for Side View (BlazePose) ===
+    # ====== Box Estimation for Side View (BlazePose) ======
     def get_box_from_blazepose(self, landmarks, pose, w, h):
         lm = mp.solutions.pose.PoseLandmark
         if pose == 'left':
@@ -176,7 +188,7 @@ class BlazePoseFaceMeshSwitcher:
         fh = int(abs(chin.y - nose.y) * h * 0.4)
         return (max(cx - fw // 2, 0), max(cy - fh // 4, 0), min(cx + fw // 2, w), min(cy + fh * 3 // 4, h))
     
-# === Main ===
+# ========= Main =========
 if __name__ == "__main__":
-    BlazePoseFaceMeshSwitcher()
+    FacialTrackingNode()
     rospy.spin()

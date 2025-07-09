@@ -20,12 +20,12 @@ class RosGui(QWidget):
         self.mask_checkbox.setChecked(rospy.get_param("/rr_tracking/use_mask", False))
         self.mask_checkbox.stateChanged.connect(self.toggle_mask)
 
-        # === BPM Display ===
+        # BPM Display
         self.bpm_label = QLabel("BPM: --   AVG: --")
         self.bpm_label.setFont(QFont("Arial", 32, QFont.Bold))
         self.bpm_label.setAlignment(Qt.AlignCenter)
 
-        # === Video Display ===
+        # Video Display
         self.image1_label = QLabel(alignment=Qt.AlignCenter)
         self.image2_label = QLabel(alignment=Qt.AlignCenter)
         self.image1_label.setMinimumSize(700, 520)
@@ -36,13 +36,13 @@ class RosGui(QWidget):
         self.label2_title = QLabel("MROI", alignment=Qt.AlignCenter)
         self.label2_title.setFont(QFont("Arial", 18))
 
-        # === Graph ===
+        # Graph 
         self.plot_widget = pg.PlotWidget(title="Ground Truth vs. Raw Signal")
         self.plot_widget.addLegend()
         self.csv_curve = self.plot_widget.plot(pen='y', name="CSV Force (centered)")
         self.raw_curve = self.plot_widget.plot(pen='c', name="Raw Signal")
         
-        # === Layouts for video display ===
+        # Layouts for video display
         vbox1 = QVBoxLayout()
         vbox1.addWidget(self.label1_title)
         vbox1.addWidget(self.image1_label)
@@ -54,7 +54,7 @@ class RosGui(QWidget):
         video_layout.addLayout(vbox1)
         video_layout.addLayout(vbox2)
         video_layout.addStretch(1)
-        # === Main Layout ===
+        # Main Layout
         layout = QVBoxLayout()
         layout.addWidget(self.bpm_label)
         layout.addLayout(video_layout)
@@ -62,20 +62,20 @@ class RosGui(QWidget):
         layout.addWidget(self.mask_checkbox)
         self.setLayout(layout)
 
-        # === Initialize ROS and Subscribers ===
+        # Initialize ROS and Subscribers
         rospy.init_node("gui_node", anonymous=True)
         self.bridge = CvBridge()
         rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
-        rospy.Subscriber("/rr_tracking/image_annotated", Image, self.image_annotated_cb)
-        rospy.Subscriber("/rr_tracking/image_roi", Image, self.image_roi_cb)
+        rospy.Subscriber("/facial_tracking/image_annotated", Image, self.image_annotated_cb)
+        rospy.Subscriber("/facial_tracking/image_roi", Image, self.image_roi_cb)
         
-        rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_callback)
-        rospy.Subscriber("/rr_tracking/tracking_stable", Bool, self.tracking_stable_callback)
+        rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_cb)
+        rospy.Subscriber("/facial_tracking/tracking_stable", Bool, self.tracking_stable_cb)
         
-        rospy.Subscriber("/rr_tracking/rr_inst", Float32, self.rr_inst_callback)
-        rospy.Subscriber("/rr_tracking/rr_avg", Float32, self.rr_avg_callback)
+        rospy.Subscriber("/rr_tracking/rr_inst", Float32, self.rr_inst_cb)
+        rospy.Subscriber("/rr_tracking/rr_avg", Float32, self.rr_avg_cb)
 
-        # === Initialize Variables ===
+        # Initialize Variables
         self.img_raw = self.img_annotated = self.img_roi = None
         self.rr_inst = None
         self.rr_avg = None
@@ -87,7 +87,7 @@ class RosGui(QWidget):
         self.duration_sec = 90
         self.tracking_stable = True
         
-        # === Initialize Plot ===
+        # Initialize Plot
         self.plot_y_range = (-100, 100)
         csv_path = ""#"/home/etsa/boson_recordings/new_tests/fast_shallow/fast_shallow.csv" 
         if csv_path:
@@ -96,41 +96,26 @@ class RosGui(QWidget):
             self.plot_widget.setXRange(0, self.duration_sec)
             self.plot_widget.setYRange(self.plot_y_range[0], self.plot_y_range[1])
 
-        # === Initialize Timers ===
+        # Initialize Timers
         self.gui_timer = QTimer(timeout=self.update_gui)
         self.gui_timer.start(30)
         self.graph_timer = QTimer(timeout=self.update_plot)
         self.graph_timer.setSingleShot(True)
         self.schedule_next_plot()
-    def toggle_mask(self, state):
-        mask_enabled = state == Qt.Checked
-        rospy.set_param("/rr_tracking/use_mask", mask_enabled)
-
-    def load_csv(self, path):
-        try:
-            df = pd.read_csv(path)
-            times = df["Data Set 1:Time(s)"].dropna().tolist()
-            forces = df["Data Set 1:Force(N)"].dropna().tolist()
-            mid = (min(forces) + max(forces)) / 2
-            self.time_data = times
-            self.csv_data = [f - mid for f in forces]
-            self.plot_widget.setXRange(min(times), max(times))
-            self.plot_widget.setYRange(self.plot_y_range[0], self.plot_y_range[1])
-            self.csv_loaded = True
-            print(f"Loaded {len(self.csv_data)} CSV points.")
-        except Exception as e:
-            print(f"CSV Error: {e}")
-            self.csv_loaded = False
-
-    def tracking_stable_callback(self, msg):
+    
+    # ================================================================================================================================      
+    # ====================================================== Callback Functions ======================================================
+    # ================================================================================================================================
+    
+    def tracking_stable_cb(self, msg):
         self.tracking_stable = msg.data
         self.update_bpm_label()
         
-    def rr_inst_callback(self, msg):
+    def rr_inst_cb(self, msg):
         self.rr_inst = msg.data
         self.update_bpm_label()
 
-    def rr_avg_callback(self, msg):
+    def rr_avg_cb(self, msg):
         self.rr_avg = msg.data
         self.update_bpm_label()
 
@@ -140,7 +125,7 @@ class RosGui(QWidget):
         tracking = f"{self.tracking_stable:.1f}" if self.tracking_stable is not None else "--"
         self.bpm_label.setText(f"BPM: {inst}   AVG: {avg} Tracking: {tracking}")
 
-    def raw_signal_callback(self, msg):
+    def raw_signal_cb(self, msg):
         t = time.time() - self.start_time
         self.raw_times.append(t)
         self.raw_data.append(msg.data)
@@ -185,6 +170,14 @@ class RosGui(QWidget):
 
         except Exception as e:
             print(f"roi image Error: {e}")
+    
+    # ================================================================================================================================      
+    # ======================================================= Helper Functions =======================================================
+    # ================================================================================================================================
+    
+    def toggle_mask(self, state):
+        mask_enabled = state == Qt.Checked
+        rospy.set_param("/rr_tracking/use_mask", mask_enabled)
             
     def update_gui(self):
         self.show_image(self.img_annotated, self.image1_label)
@@ -201,7 +194,22 @@ class RosGui(QWidget):
             qimg = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
             label.setPixmap(QPixmap.fromImage(qimg).scaled(
                 label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
+    def load_csv(self, path):
+        try:
+            df = pd.read_csv(path)
+            times = df["Data Set 1:Time(s)"].dropna().tolist()
+            forces = df["Data Set 1:Force(N)"].dropna().tolist()
+            mid = (min(forces) + max(forces)) / 2
+            self.time_data = times
+            self.csv_data = [f - mid for f in forces]
+            self.plot_widget.setXRange(min(times), max(times))
+            self.plot_widget.setYRange(self.plot_y_range[0], self.plot_y_range[1])
+            self.csv_loaded = True
+            print(f"Loaded {len(self.csv_data)} CSV points.")
+        except Exception as e:
+            print(f"CSV Error: {e}")
+            self.csv_loaded = False
+            
     def update_plot(self):
         try:
             if self.csv_loaded and self.csv_index < len(self.csv_data):
