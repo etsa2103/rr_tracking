@@ -51,8 +51,7 @@ class SimpleBreathTracker:
             print(f"Image 1 Error: {e}")
             
     def image_cb(self, msg):
-        # === Decode & Preprocess ROI ===
-        
+        # === Decode ROI ===
         self.image_roi = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
         if self.image_roi is None or self.image_roi.size == 0:
             rospy.logwarn_throttle(1.0, "[rr_tracking] Empty ROI image received.")
@@ -60,9 +59,14 @@ class SimpleBreathTracker:
         if self.image_raw is None or self.image_raw.size == 0:
             rospy.logwarn_throttle(1.0, "[rr_tracking] Empty raw image received.")
             return
-
-        threshold = np.percentile(self.image_raw, 70)
-        warm_pixels = self.image_roi[self.image_roi > threshold]
+        
+        # === ROI Masking & Warm Pixel Extraction ===
+        use_mask = rospy.get_param("/rr_tracking/use_mask", True)
+        if use_mask:
+            threshold = np.percentile(self.image_raw, 70)
+            warm_pixels = self.image_roi[self.image_roi > threshold]
+        else:
+            warm_pixels = self.image_roi.flatten()
 
         # === Edge Cases & Frame Skipping ===
         if not self.tracking_stable or warm_pixels.size == 0 or warm_pixels.mean() < 0.3:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys, time, rospy, cv2
 import pandas as pd, numpy as np
-from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout
+from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from PyQt5.QtCore import QTimer, Qt
 from sensor_msgs.msg import Image
@@ -15,6 +15,10 @@ class RosGui(QWidget):
         super().__init__()
         self.setWindowTitle("Resperatory Rate Tracking GUI")
         self.resize(1400, 1000)
+        
+        self.mask_checkbox = QCheckBox("Use Background Mask")
+        self.mask_checkbox.setChecked(rospy.get_param("/rr_tracking/use_mask", False))
+        self.mask_checkbox.stateChanged.connect(self.toggle_mask)
 
         # === BPM Display ===
         self.bpm_label = QLabel("BPM: --   AVG: --")
@@ -55,6 +59,7 @@ class RosGui(QWidget):
         layout.addWidget(self.bpm_label)
         layout.addLayout(video_layout)
         layout.addWidget(self.plot_widget)
+        layout.addWidget(self.mask_checkbox)
         self.setLayout(layout)
 
         # === Initialize ROS and Subscribers ===
@@ -97,6 +102,9 @@ class RosGui(QWidget):
         self.graph_timer = QTimer(timeout=self.update_plot)
         self.graph_timer.setSingleShot(True)
         self.schedule_next_plot()
+    def toggle_mask(self, state):
+        mask_enabled = state == Qt.Checked
+        rospy.set_param("/rr_tracking/use_mask", mask_enabled)
 
     def load_csv(self, path):
         try:
@@ -153,8 +161,8 @@ class RosGui(QWidget):
 
     def image_roi_cb(self, msg):
         try:
-            show_mask = True
-            if(show_mask):
+            mask_enabled = rospy.get_param("/rr_tracking/use_mask", True)
+            if mask_enabled:
                 mono16 = self.bridge.imgmsg_to_cv2(msg, 'mono16')
         
                 # Use grayscale for mask
@@ -201,7 +209,10 @@ class RosGui(QWidget):
                 self.csv_index += 1
                 self.schedule_next_plot()
             elif self.csv_loaded:
-                self.reset_graph()
+                # Stop updating when done
+                self.csv_curve.setData(self.time_data, self.csv_data)
+                self.raw_curve.setData(self.raw_times, self.raw_data)
+                self.graph_timer.stop()
             else:
                 if self.raw_times:
                     x_start = max(0, self.raw_times[-1] - self.duration_sec)

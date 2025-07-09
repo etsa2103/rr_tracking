@@ -92,7 +92,7 @@ class BlazePoseFaceMeshSwitcher:
         norm_vec = vec / (np.linalg.norm(vec) + 1e-6)
         perp_vec = direction * np.array([-norm_vec[1], norm_vec[0]])
         ear_dist = np.linalg.norm(np.array([ear.x * w, ear.y * h]) - mouth_pt) if valid_landmark(ear) else np.linalg.norm(vec)
-        nose_pt = mid_pt + perp_vec * (0.3 * ear_dist)
+        nose_pt = mid_pt + perp_vec * (0.45 * ear_dist)
 
         box_w = int(ear_dist * 0.5)
         box_h = int(ear_dist * 0.5)
