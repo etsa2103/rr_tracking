@@ -160,21 +160,40 @@ class FacialTrackingNode:
         if not (valid_landmark(eye) and valid_landmark(mouth)):
             return None
 
-        eye_pt, mouth_pt = np.array([eye.x * w, eye.y * h]), np.array([mouth.x * w, mouth.y * h])
+        # Convert to image coordinates
+        eye_pt = np.array([eye.x * w, eye.y * h])
+        mouth_pt = np.array([mouth.x * w, mouth.y * h])
         mid_pt = (eye_pt + mouth_pt) / 2
+        # find point 40 percent of the way from mouth to eye
         mid_pt = (mid_pt + mouth_pt * 0.4) / 1.4
+
+        # Vector from mouth to eye
         vec = eye_pt - mouth_pt
         norm_vec = vec / (np.linalg.norm(vec) + 1e-6)
-        perp_vec = direction * np.array([-norm_vec[1], norm_vec[0]])
-        ear_dist = np.linalg.norm(np.array([ear.x * w, ear.y * h]) - mouth_pt) if valid_landmark(ear) else np.linalg.norm(vec)
-        nose_pt = mid_pt + perp_vec * (0.45 * ear_dist)
 
+        # Rotate 90° to get perpendicular direction (CCW), flip for left view
+        perp_vec = direction * np.array([-norm_vec[1], norm_vec[0]])
+
+        # Use ear distance to set scale
+        if valid_landmark(ear):
+            ear_pt = np.array([ear.x * w, ear.y * h])
+            ear_dist = np.linalg.norm(ear_pt - mouth_pt)
+        else:
+            ear_dist = np.linalg.norm(vec)
+
+        # Estimate nose position
+        offset_dist = 0.3 * ear_dist
+        nose_pt = mid_pt + perp_vec * offset_dist
+
+        # Define box around nose
         box_w = int(ear_dist * 0.5)
         box_h = int(ear_dist * 0.5)
+
         x_min = max(int(nose_pt[0] - box_w // 2), 0)
         y_min = max(int(nose_pt[1] - box_h // 2), 0)
         x_max = min(int(nose_pt[0] + box_w // 2), w)
         y_max = min(int(nose_pt[1] + box_h // 2), h)
+
         return (x_min, y_min, x_max, y_max)
 
     # === Box Estimation for Frontal View (FaceMesh) ===

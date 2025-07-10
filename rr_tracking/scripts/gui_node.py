@@ -68,12 +68,14 @@ class RosGui(QWidget):
         rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
         rospy.Subscriber("/facial_tracking/image_annotated", Image, self.image_annotated_cb)
         rospy.Subscriber("/facial_tracking/image_roi", Image, self.image_roi_cb)
-        
-        rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_cb)
         rospy.Subscriber("/facial_tracking/tracking_stable", Bool, self.tracking_stable_cb)
         
+        rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_cb)
         rospy.Subscriber("/rr_tracking/rr_inst", Float32, self.rr_inst_cb)
         rospy.Subscriber("/rr_tracking/rr_avg", Float32, self.rr_avg_cb)
+        rospy.Subscriber("/rr_tracking/recording", Bool, self.recording_cb)
+
+        
 
         # Initialize Variables
         self.img_raw = self.img_annotated = self.img_roi = None
@@ -86,6 +88,8 @@ class RosGui(QWidget):
         self.csv_loaded = False
         self.duration_sec = 90
         self.tracking_stable = True
+        self.is_recording = False
+
         
         # Initialize Plot
         self.plot_y_range = (-100, 100)
@@ -107,6 +111,9 @@ class RosGui(QWidget):
     # ====================================================== Callback Functions ======================================================
     # ================================================================================================================================
     
+    def recording_cb(self, msg):
+        self.is_recording = msg.data
+
     def tracking_stable_cb(self, msg):
         self.tracking_stable = msg.data
         self.update_bpm_label()
@@ -120,10 +127,15 @@ class RosGui(QWidget):
         self.update_bpm_label()
 
     def update_bpm_label(self):
-        inst = f"{self.rr_inst:.1f}" if self.rr_inst is not None else "--"
-        avg = f"{self.rr_avg:.1f}" if self.rr_avg is not None else "--"
-        tracking = f"{self.tracking_stable:.1f}" if self.tracking_stable is not None else "--"
-        self.bpm_label.setText(f"BPM: {inst}   AVG: {avg} Tracking: {tracking}")
+        if self.is_recording:
+            self.bpm_label.setText("Recording... Please wait.")
+            return
+        else:
+            inst = f"{self.rr_inst:.1f}" if self.rr_inst is not None else "--"
+            avg = f"{self.rr_avg:.1f}" if self.rr_avg is not None else "--"
+            tracking = f"{self.tracking_stable:.1f}" if self.tracking_stable is not None else "--"
+            self.bpm_label.setText(f"BPM: {inst}   AVG: {avg} Tracking: {tracking}")
+
 
     def raw_signal_cb(self, msg):
         t = time.time() - self.start_time
@@ -260,6 +272,11 @@ class RosGui(QWidget):
 
 
 if __name__ == "__main__":
+    # Check if GUI is enabled via parameter
+    if not rospy.get_param("/enable_gui", True):
+        rospy.loginfo("GUI is disabled via parameter.")
+        sys.exit(0)
+    # Initialize ROS node and GUI
     app = QApplication(sys.argv)
     gui = RosGui()
     gui.show()

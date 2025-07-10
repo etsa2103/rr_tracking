@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import rospy
 import time
+import threading
 import numpy as np
 from collections import deque
 from cv_bridge import CvBridge
@@ -9,14 +10,6 @@ from std_msgs.msg import Float32, Bool, String, UInt8
 from scipy.ndimage import uniform_filter1d
 from scipy.signal import butter, filtfilt, find_peaks
 import matplotlib.pyplot as plt
-
-# ===================================
-# ======== Utility Functions ========
-# ===================================
-def bandpass(data, fs, low=0.1, high=0.7):
-    nyq = 0.5 * fs
-    b, a = butter(4, [low / nyq, high / nyq], btype='band')
-    return filtfilt(b, a, data)
 
 # === Main Signal Processing Class ===
 class SignalProcessingNode:
@@ -34,7 +27,7 @@ class SignalProcessingNode:
         self.rr_inst_pub = rospy.Publisher("/rr_tracking/rr_inst", Float32, queue_size=1)
         self.rr_avg_pub = rospy.Publisher("/rr_tracking/rr_avg", Float32, queue_size=1)
         self.rr_final_pub = rospy.Publisher("/rr_tracking/rr_final", Float32, queue_size=1)
-
+        self.recording_pub = rospy.Publisher("/rr_tracking/recording", Bool, queue_size=1)
 
         # Runtime State
         self.recording = False
@@ -58,8 +51,10 @@ class SignalProcessingNode:
     # ================================================================================================================================
     
     def trigger_cb(self, msg):
-        if msg.data == 1 and not self.recording:
+        if msg.data > 0 and not self.recording:
             self.recording = True
+            self.recording_pub.publish(Bool(True))
+
             self.recorded_roi_images = []
             self.record_start_time = time.time()
             rospy.loginfo("Started recording 20 seconds of frames.")  
@@ -69,22 +64,32 @@ class SignalProcessingNode:
     def pose_type_cb(self, msg): self.pose_type = msg.data
 
     def image_roi_cb(self, msg):
+        # === Get the raw image from the topic ===
         self.image_roi = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
+        rospy.logdebug(f"[rr_tracking] Received ROI image of shape: {self.image_roi.shape}")
+        # === Check if we are recording ===
         if self.recording:
             self.recorded_roi_images.append(self.image_roi.copy())
             if time.time() - self.record_start_time >= 20:
                 self.recording = False
                 rospy.loginfo("Finished recording. Processing...")
-                self.process_recorded_data()
-                rospy.spin()
-            return  # Don’t process live signal while recording
-        
+                if rospy.get_param("/enable_gui", True):
+                    threading.Thread(target=self.process_recorded_data, daemon=True).start()
+                else:
+                    self.process_recorded_data()
+
+        # Check if GUI is enabled via parameter
+        if rospy.get_param("/enable_gui", True):
+            self.process_live_data()
+            
+    # ================================================================================================================================      
+    # ======================================================= Helper Functions =======================================================
+    # ================================================================================================================================
+    def process_live_data(self):
         # === Decode ROI ===
+        rospy.logdebug(f"[rr_tracking] Received ROI image of shape: {self.image_roi.shape}")
         if self.image_roi is None or self.image_roi.size == 0:
             rospy.logwarn_throttle(1.0, "[rr_tracking] Empty ROI image received.")
-            return
-        if self.image_raw is None or self.image_raw.size == 0:
-            rospy.logwarn_throttle(1.0, "[rr_tracking] Empty raw image received.")
             return
         
         # === ROI Masking & Warm Pixel Extraction ===
@@ -137,10 +142,6 @@ class SignalProcessingNode:
             self.rr_inst_pub.publish(Float32(0.0))
             self.rr_avg_pub.publish(Float32(0.0))
             
-    # ================================================================================================================================      
-    # ======================================================= Helper Functions =======================================================
-    # ================================================================================================================================
-    
     def process_recorded_data(self):
         if not self.recorded_roi_images:
             rospy.logwarn("No recorded frames to process.")
@@ -179,7 +180,7 @@ class SignalProcessingNode:
 
         # === Step 3: Peak Detection ===
         min_samples = int(self.min_peak_distance * self.frame_rate)
-        min_prominence = 15 if self.pose_type in ["left", "right"] else 8
+        min_prominence = 18 if self.pose_type in ["left", "right"] else 9
         peaks, _ = find_peaks(inverted, distance=min_samples, prominence=min_prominence)
 
         # === Step 4: Respiration Rate Calculation ===
@@ -198,8 +199,6 @@ class SignalProcessingNode:
             self.rr_avg_pub.publish(Float32(0.0))
             self.rr_final_pub.publish(Float32(0.0))  # ← Still publish a 0
 
-            # Optional: publish raw signal after processing (last value)
-            #self.raw_pub.publish(Float32(inverted[-1]))
         # === OPTIONAL: Plot the processed signal with peaks ===
         try:
             plt.figure(figsize=(10, 4))
@@ -214,6 +213,8 @@ class SignalProcessingNode:
             plt.show()  # or plt.savefig("/tmp/rr_plot.png") to save instead
         except Exception as e:
             rospy.logwarn(f"Failed to plot signal: {e}")
+        self.recording_pub.publish(Bool(False))
+
 
 # ========= Main =========
 if __name__ == "__main__":
@@ -222,3 +223,11 @@ if __name__ == "__main__":
         rospy.spin()
     except rospy.ROSInterruptException:
         pass
+
+# ===================================
+# ======== Utility Functions ========
+# ===================================
+def bandpass(data, fs, low=0.1, high=0.7):
+    nyq = 0.5 * fs
+    b, a = butter(4, [low / nyq, high / nyq], btype='band')
+    return filtfilt(b, a, data)
