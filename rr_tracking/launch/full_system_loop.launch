@@ -1,4 +1,7 @@
 <launch>
+  <!-- Setup Parameters -->
+  <param name="enable_gui" value="false" />
+  
   <!-- Play the latest thermal recording on loop -->
   <node name="rosbag_play" pkg="rosbag" type="play"
         args="--loop /home/etsa/boson_recordings/new_tests/fast_shallow/fast_shallow.bag"
@@ -11,8 +14,6 @@
   <node pkg="rr_tracking" type="signal_processing_node.py" name="signal_processing_node" output="screen" />
 
   <!-- Run the display node -->
-  <arg name="enable_gui" default="false" />
-  <param name="enable_gui" value="$(arg enable_gui)" />
   <node pkg="rr_tracking" type="gui_node.py" name="gui_node" 
         output="screen" launch-prefix="python3" />
 </launch>

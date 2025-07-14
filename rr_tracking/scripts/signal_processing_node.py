@@ -73,13 +73,13 @@ class SignalProcessingNode:
             if time.time() - self.record_start_time >= 20:
                 self.recording = False
                 rospy.loginfo("Finished recording. Processing...")
-                if rospy.get_param("/enable_gui", True):
+                if rospy.get_param("/enable_gui", False):
                     threading.Thread(target=self.process_recorded_data, daemon=True).start()
                 else:
                     self.process_recorded_data()
 
         # Check if GUI is enabled via parameter
-        if rospy.get_param("/enable_gui", True):
+        if rospy.get_param("/enable_gui", False):
             self.process_live_data()
             
     # ================================================================================================================================      

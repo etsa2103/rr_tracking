@@ -273,7 +273,7 @@ class RosGui(QWidget):
 
 if __name__ == "__main__":
     # Check if GUI is enabled via parameter
-    if not rospy.get_param("/enable_gui", True):
+    if not rospy.get_param("/enable_gui", False):
         rospy.loginfo("GUI is disabled via parameter.")
         sys.exit(0)
     # Initialize ROS node and GUI

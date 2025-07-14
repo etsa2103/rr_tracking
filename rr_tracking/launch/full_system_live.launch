@@ -1,4 +1,7 @@
 <launch>  
+  <!-- Setup Parameters -->
+  <param name="enable_gui" value="false" />
+  
   <!-- Run boson camera live -->
   <include file="$(find boson_camera)/launch/boson640.launch" />
 
@@ -9,8 +12,6 @@
   <node pkg="rr_tracking" type="signal_processing_node.py" name="signal_processing_node" output="screen" />
 
   <!-- Run the GUI node -->
-  <arg name="enable_gui" default="false" />
-  <param name="enable_gui" value="$(arg enable_gui)" />
   <node pkg="rr_tracking" type="gui_node.py" name="gui_node" 
         output="screen" launch-prefix="python3" />
 </launch>
