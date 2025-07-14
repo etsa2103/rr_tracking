@@ -17,7 +17,7 @@
 <!-- =========================================================== -->
 <!-- ir camera -->
 
-    <arg name="boson_name" default="boson" />
+    <arg name="boson_name" default="boson640" />
     <arg name="boson_config_file" default="$(find boson_camera)/config/boson640_config.yaml"/>
 
     <node name="$(arg boson_name)" pkg="boson_camera" type="boson_camera" output="screen"

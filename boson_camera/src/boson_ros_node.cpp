@@ -43,12 +43,12 @@ ros::Duration get_reset_time() {
 int main(int argc, char *argv[]) {
     // Default frame rate of 10 Hz
     float frame_rate = 10.0;
-    std::string camera_name = "boson";
+    std::string camera_name = "boson640";
 
     // Initialize node
     ros::init(argc, argv, "boson_camera_node");
 
-    ros::NodeHandle nh("boson");
+    ros::NodeHandle nh("boson640");
     ros::NodeHandle nh_private("~");
 
     // ROS param handling
@@ -70,10 +70,10 @@ int main(int argc, char *argv[]) {
 
     // Setup publisher
     ros::Publisher camera_info_pub_;
-    camera_info_pub_ = nh.advertise<sensor_msgs::CameraInfo>("/boson/camera_info", 1);
+    camera_info_pub_ = nh.advertise<sensor_msgs::CameraInfo>("/boson640/camera_info", 1);
 
     image_transport::ImageTransport it(nh);
-    image_transport::Publisher boson_raw_pub = it.advertise("/boson/image_raw", 1);
+    image_transport::Publisher boson_raw_pub = it.advertise("/boson640/image_raw", 1);
 
     // Set publishing frequency
     if (nh.hasParam("frame_rate")) {
@@ -109,7 +109,7 @@ int main(int argc, char *argv[]) {
             camera_info_pub_.publish(cinfo_msg);
         } else {
             if (framecount % 100 == 0)
-                ROS_INFO_ONCE("Boson is not calibrated!");
+                ROS_INFO_ONCE("Boson640 is not calibrated!");
         }
 
         ros::spinOnce();

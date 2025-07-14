@@ -65,7 +65,7 @@ class RosGui(QWidget):
         # Initialize ROS and Subscribers
         rospy.init_node("gui_node", anonymous=True)
         self.bridge = CvBridge()
-        rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
+        rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb)
         rospy.Subscriber("/facial_tracking/image_annotated", Image, self.image_annotated_cb)
         rospy.Subscriber("/facial_tracking/image_roi", Image, self.image_roi_cb)
         rospy.Subscriber("/facial_tracking/tracking_stable", Bool, self.tracking_stable_cb)
