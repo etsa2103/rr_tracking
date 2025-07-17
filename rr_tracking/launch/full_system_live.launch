@@ -1,6 +1,7 @@
 <launch>  
   <!-- Setup Parameters -->
-  <param name="enable_gui" value="false" />
+  <arg name="enable_gui" default="false" />
+  <param name="enable_gui" value="$(arg enable_gui)" />
   
   <!-- Run boson camera live -->
   <include file="$(find boson_camera)/launch/boson640.launch" />

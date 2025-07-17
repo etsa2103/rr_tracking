@@ -67,31 +67,15 @@ class RosGui(QWidget):
         rospy.init_node("gui_node", anonymous=True)
         self.bridge = CvBridge()
 
-        rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb)
-        rospy.Subscriber("/facial_tracking/image_annotated", Image, self.image_annotated_cb)
-        rospy.Subscriber("/facial_tracking/image_roi", Image, self.image_roi_cb)
-        rospy.Subscriber("/facial_tracking/tracking_stable", Bool, self.tracking_stable_cb)
-        rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_cb)
-        rospy.Subscriber("/rr_tracking/rr_inst", Float32, self.rr_inst_cb)
-        rospy.Subscriber("/rr_tracking/rr_avg", Float32, self.rr_avg_cb)
-        rospy.Subscriber("/rr_tracking/recording", Bool, self.recording_cb)
-        rospy.Subscriber("/rr_tracking/segment_bounds", Float64MultiArray, self.segment_bounds_cb)
-        rospy.Subscriber("/rr_tracking/peaks", Float64MultiArray, self.peaks_cb)
-
-        self.img_raw = self.img_annotated = self.img_roi = None
-        self.rr_inst = None
-        self.rr_avg = None
+        self.start_time = rospy.get_time()
         self.csv_data = self.time_data = []
         self.csv_index = 0
-        self.raw_data, self.raw_times = [], []
-        self.start_time = rospy.get_time()
         self.csv_loaded = False
         self.duration_sec = 90
-        self.tracking_stable = True
-        self.is_recording = False
+        
+        self.img_raw = None
+        self.img_annotated = None
 
-        self.latest_peaks = []
-        self.latest_segment_bounds = []
 
         self.plot_y_range = (-100, 100)
         csv_path = ""  # Leave blank unless loading CSV
@@ -108,35 +92,6 @@ class RosGui(QWidget):
         self.schedule_next_plot()
 
     # ====================================================== ROS Callbacks ======================================================
-    def recording_cb(self, msg):
-        self.is_recording = msg.data
-
-    def tracking_stable_cb(self, msg):
-        self.tracking_stable = msg.data
-        self.update_bpm_label()
-
-    def rr_inst_cb(self, msg):
-        self.rr_inst = msg.data
-        self.update_bpm_label()
-
-    def rr_avg_cb(self, msg):
-        self.rr_avg = msg.data
-        self.update_bpm_label()
-
-    def raw_signal_cb(self, msg):
-        t = rospy.get_time() - self.start_time
-        self.raw_times.append(t)
-        self.raw_data.append(msg.data)
-        self.raw_data = self.raw_data[-2000:]
-        self.raw_times = self.raw_times[-2000:]
-
-    def segment_bounds_cb(self, msg):
-        data = list(msg.data)
-        # Parse pairs of segment bounds
-        self.latest_segment_bounds = [(data[i], data[i+1]) for i in range(0, len(data), 2)]
-
-    def peaks_cb(self, msg):
-        self.latest_peaks = list([data for data in msg.data])
 
     def image_raw_cb(self, msg):
         try:
@@ -166,7 +121,7 @@ class RosGui(QWidget):
 
     # ======================================================= GUI Updates =======================================================
     def update_bpm_label(self):
-        if self.is_recording:
+        if self.recording:
             self.bpm_label.setText("Recording... Please wait.")
         else:
             inst = f"{self.rr_inst:.1f}" if self.rr_inst is not None else "--"

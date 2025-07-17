@@ -8,24 +8,13 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 from cv_bridge import CvBridge
 
-# ===================================
-# ======== Utility Functions ========
-# ===================================
-def valid_landmark(lm, threshold=0.5):
-    return lm.visibility > threshold if hasattr(lm, 'visibility') else lm.visibility == 0 or lm.presence > threshold
-
-def smooth_box(prev_box, new_box, alpha=0.3):
-    if prev_box is None:
-        return new_box
-    return tuple([int(prev_box[i] * (1 - alpha) + new_box[i] * alpha) for i in range(4)])
-
 # === Main Tracker Class ===
 class FacialTrackingNode:
     def __init__(self):
         # ROS and Model Setup
         rospy.init_node("facial_tracking_node")
         self.bridge = CvBridge()
-        self.pose_detector = mp.solutions.pose.Pose(
+        self.blaze_pose = mp.solutions.pose.Pose(
             static_image_mode=False, 
             model_complexity=1, 
             min_detection_confidence=0.6)
@@ -39,7 +28,7 @@ class FacialTrackingNode:
         self.drawing_spec = self.draw_utils.DrawingSpec(thickness=1, circle_radius=1)
 
         # ROS Publishers/Subscribers
-        rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb)
+        rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb) #this should be boson640 unless testing on old bag files
         self.image_annotated_pub = rospy.Publisher("/facial_tracking/image_annotated", Image, queue_size=1)
         self.image_roi_pub = rospy.Publisher("/facial_tracking/image_roi", Image, queue_size=1)
         self.tracking_stable_pub = rospy.Publisher("/facial_tracking/tracking_stable", Bool, queue_size=1)
@@ -66,8 +55,9 @@ class FacialTrackingNode:
             now = rospy.get_time()
             
             # === Pose Detection ===
-            pose_result = self.pose_detector.process(image_rgb)
+            pose_result = self.blaze_pose.process(image_rgb)
             if not pose_result.pose_landmarks:
+                rospy.logdebug(f"[rr_tracking/facial_tracking] No pose detected by BlazePose")
                 return
             pose_landmarks = pose_result.pose_landmarks.landmark
             pose_type = self.determine_pose_type(pose_landmarks)
@@ -114,7 +104,7 @@ class FacialTrackingNode:
             self.image_annotated_pub.publish(annotated_msg)
 
         except Exception as e:
-            rospy.logerr(f"[PoseSwitcherNode] Error: {e}")
+            rospy.logerr(f"[rr_tracking/facial_tracking] Error: {e}")
       
     # ================================================================================================================================      
     # ======================================================= Helper Functions =======================================================
@@ -127,7 +117,7 @@ class FacialTrackingNode:
         cx1, cy1 = (self.last_mroi_box[0] + self.last_mroi_box[2]) / 2, (self.last_mroi_box[1] + self.last_mroi_box[3]) / 2
         cx2, cy2 = (new_box[0] + new_box[2]) / 2, (new_box[1] + new_box[3]) / 2
         speed = np.linalg.norm([cx2 - cx1, cy2 - cy1]) / (now - self.last_mroi_time + 1e-5)
-        return speed < 100
+        return speed < 200
 
     # ====== Pose Type Classification ======
     def determine_pose_type(self, landmarks):
@@ -158,12 +148,14 @@ class FacialTrackingNode:
         else:
             return None
         if not (valid_landmark(eye) and valid_landmark(mouth)):
+            rospy.logdebug(f"[rr_tracking/facial_tracking] BlazePose does not have sufficient landmarks for nose tracking")
             return None
 
         # Convert to image coordinates
         eye_pt = np.array([eye.x * w, eye.y * h])
         mouth_pt = np.array([mouth.x * w, mouth.y * h])
         mid_pt = (eye_pt + mouth_pt) / 2
+        
         # find point 40 percent of the way from mouth to eye
         mid_pt = (mid_pt + mouth_pt * 0.4) / 1.4
 
@@ -172,7 +164,7 @@ class FacialTrackingNode:
         norm_vec = vec / (np.linalg.norm(vec) + 1e-6)
 
         # Rotate 90° to get perpendicular direction (CCW), flip for left view
-        perp_vec = direction * np.array([-norm_vec[1], norm_vec[0]])
+        perp_vec = direction * np.array([-norm_vec[1], norm_vec[0]]) * 1.1
 
         # Use ear distance to set scale
         if valid_landmark(ear):
@@ -201,12 +193,24 @@ class FacialTrackingNode:
         try:
             nose, left, right, chin = landmarks[1], landmarks[234], landmarks[454], landmarks[152]
         except IndexError:
+            rospy.logdebug(f"[rr_tracking/facial_tracking] FaceMesh does not have sufficient landmarks for nose tracking")
             return None
         cx, cy = int(nose.x * w), int(nose.y * h)
         fw = int(abs(right.x - left.x) * w * 0.25)
         fh = int(abs(chin.y - nose.y) * h * 0.4)
         return (max(cx - fw // 2, 0), max(cy - fh // 4, 0), min(cx + fw // 2, w), min(cy + fh * 3 // 4, h))
     
+# =========================================================================================================
+# =========================================== Utility Functions ===========================================
+# =========================================================================================================
+def valid_landmark(lm, threshold=0.5):
+    return lm.visibility > threshold if hasattr(lm, 'visibility') else lm.visibility == 0 or lm.presence > threshold
+
+def smooth_box(prev_box, new_box, alpha=0.3):
+    if prev_box is None:
+        return new_box
+    return tuple([int(prev_box[i] * (1 - alpha) + new_box[i] * alpha) for i in range(4)])
+
 # ========= Main =========
 if __name__ == "__main__":
     FacialTrackingNode()
