@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-import sys, time, rospy, cv2
+import sys, rospy, cv2
 if not rospy.get_param("/enable_gui", False):
     rospy.loginfo("Running in headless mode, GUI disabled.")
     pass
 
 import pandas as pd, numpy as np
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32, Bool, Float64MultiArray
 from cv_bridge import CvBridge
 from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from PyQt5.QtCore import QTimer, Qt
 import pyqtgraph as pg
+from pyqtgraph import LinearRegionItem
+
+from rr_tracking.msg import TrackingState
+from rr_tracking.msg import ProcessingState, StableRange
 
 class RosGui(QWidget):
     def __init__(self):
@@ -68,15 +71,8 @@ class RosGui(QWidget):
         self.bridge = CvBridge()
 
         rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb)
-        rospy.Subscriber("/facial_tracking/image_annotated", Image, self.image_annotated_cb)
-        rospy.Subscriber("/facial_tracking/image_roi", Image, self.image_roi_cb)
-        rospy.Subscriber("/facial_tracking/tracking_stable", Bool, self.tracking_stable_cb)
-        rospy.Subscriber("/rr_tracking/raw_signal", Float32, self.raw_signal_cb)
-        rospy.Subscriber("/rr_tracking/rr_inst", Float32, self.rr_inst_cb)
-        rospy.Subscriber("/rr_tracking/rr_avg", Float32, self.rr_avg_cb)
-        rospy.Subscriber("/rr_tracking/recording", Bool, self.recording_cb)
-        rospy.Subscriber("/rr_tracking/segment_bounds", Float64MultiArray, self.segment_bounds_cb)
-        rospy.Subscriber("/rr_tracking/peaks", Float64MultiArray, self.peaks_cb)
+        rospy.Subscriber("/facial_tracking/trackingState", TrackingState, self.tracking_state_cb)
+        rospy.Subscriber("/signal_processing/processingState", ProcessingState, self.processing_state_cb)
 
         self.img_raw = self.img_annotated = self.img_roi = None
         self.rr_inst = None
@@ -86,19 +82,20 @@ class RosGui(QWidget):
         self.raw_data, self.raw_times = [], []
         self.start_time = rospy.get_time()
         self.csv_loaded = False
-        self.duration_sec = 90
+        self.duration_sec = 55
         self.tracking_stable = True
         self.is_recording = False
 
         self.latest_peaks = []
         self.latest_segment_bounds = []
+        self.stable_region_patches = []
 
-        self.plot_y_range = (-100, 100)
+        self.plot_y_range = (-80, 80)
         csv_path = ""  # Leave blank unless loading CSV
         if csv_path:
             self.load_csv(csv_path)
         else:
-            self.plot_widget.setXRange(0, self.duration_sec)
+            self.plot_widget.setXRange(0, 15)
             self.plot_widget.setYRange(*self.plot_y_range)
 
         self.gui_timer = QTimer(timeout=self.update_gui)
@@ -108,52 +105,11 @@ class RosGui(QWidget):
         self.schedule_next_plot()
 
     # ====================================================== ROS Callbacks ======================================================
-    def recording_cb(self, msg):
-        self.is_recording = msg.data
-
-    def tracking_stable_cb(self, msg):
-        self.tracking_stable = msg.data
-        self.update_bpm_label()
-
-    def rr_inst_cb(self, msg):
-        self.rr_inst = msg.data
-        self.update_bpm_label()
-
-    def rr_avg_cb(self, msg):
-        self.rr_avg = msg.data
-        self.update_bpm_label()
-
-    def raw_signal_cb(self, msg):
-        t = rospy.get_time() - self.start_time
-        self.raw_times.append(t)
-        self.raw_data.append(msg.data)
-        self.raw_data = self.raw_data[-2000:]
-        self.raw_times = self.raw_times[-2000:]
-
-    def segment_bounds_cb(self, msg):
-        data = list(msg.data)
-        # Parse pairs of segment bounds
-        self.latest_segment_bounds = [(data[i], data[i+1]) for i in range(0, len(data), 2)]
-
-    def peaks_cb(self, msg):
-        self.latest_peaks = list([data for data in msg.data])
-
-    def image_raw_cb(self, msg):
-        try:
-            self.img_raw = self.bridge.imgmsg_to_cv2(msg, 'mono16')
-        except Exception as e:
-            print(f"Raw Image Error: {e}")
-
-    def image_annotated_cb(self, msg):
-        try:
-            self.img_annotated = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-        except Exception as e:
-            print(f"annotated image Error: {e}")
-
-    def image_roi_cb(self, msg):
+    
+    def tracking_state_cb(self, msg):
         try:
             mask_enabled = rospy.get_param("/rr_tracking/use_mask", False)
-            mono16 = self.bridge.imgmsg_to_cv2(msg, 'mono16')
+            mono16 = self.bridge.imgmsg_to_cv2(msg.image_roi, 'mono16')
             ptp = mono16.ptp()
             norm = ((mono16 - mono16.min()) / ptp * 255).astype(np.uint8) if ptp > 0 else np.zeros_like(mono16, dtype=np.uint8)
             self.img_roi = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
@@ -163,6 +119,38 @@ class RosGui(QWidget):
                 self.img_roi[warm_mask] = [0, 0, 255]
         except Exception as e:
             print(f"roi image Error: {e}")
+            
+        try:
+            self.img_annotated = self.bridge.imgmsg_to_cv2(msg.image_annotated, 'bgr8')
+        except Exception as e:
+            print(f"annotated image Error: {e}")
+            
+        self.tracking_stable = msg.tracking_stable.data
+        self.update_bpm_label()
+        
+    def processing_state_cb(self, msg):
+        self.rr_inst = msg.rr_inst.data
+        self.rr_avg = msg.rr_avg.data
+        self.update_bpm_label()
+        
+        self.is_recording = msg.recording.data
+        
+        self.latest_segment_bounds = [(sr.start_time, sr.end_time) for sr in msg.stable_ranges]
+        print(self.latest_segment_bounds)
+        self.latest_peaks = list([peak for peak in msg.peak_times.data])
+        
+        self.raw_times = msg.graph_times.data
+        self.raw_data = msg.graph_data.data
+        self.raw_data = self.raw_data[-2000:]
+        self.raw_times = self.raw_times[-2000:]
+        
+        # print(self.raw_times, "|", self.raw_data)
+
+    def image_raw_cb(self, msg):
+        try:
+            self.img_raw = self.bridge.imgmsg_to_cv2(msg, 'mono16')
+        except Exception as e:
+            print(f"Raw Image Error: {e}")
 
     # ======================================================= GUI Updates =======================================================
     def update_bpm_label(self):
@@ -217,12 +205,11 @@ class RosGui(QWidget):
             if self.latest_peaks and self.raw_times:
                 spots = []
                 for t in self.latest_peaks:
-                    t=t-self.start_time
                     closest = min(self.raw_times, key=lambda rt: abs(rt - t))
                     if abs(closest - t) < 1:
                         idx = self.raw_times.index(closest)
                         y = self.raw_data[idx]
-                        spots.append({'pos': (closest, y), 'symbol': 'x'})
+                        spots.append({'pos': (closest, y), 'symbol': 'x','size': 15})
                 self.peak_scatter.setData(spots)
             else:
                 self.peak_scatter.setData([])
@@ -233,13 +220,24 @@ class RosGui(QWidget):
             self.segment_lines.clear()
             if self.latest_segment_bounds:
                 for seg_start, seg_end in self.latest_segment_bounds:
-                    seg_start = seg_start-self.start_time
-                    seg_end = seg_start-self.start_time
                     line_start = pg.InfiniteLine(pos=seg_start, angle=90, pen=pg.mkPen('g', style=Qt.DashLine))
                     line_end = pg.InfiniteLine(pos=seg_end, angle=90, pen=pg.mkPen('g', style=Qt.DashLine))
                     self.plot_widget.addItem(line_start)
                     self.plot_widget.addItem(line_end)
                     self.segment_lines.extend([line_start, line_end])
+                    
+            # Remove old shaded regions
+            for region in self.stable_region_patches:
+                self.plot_widget.removeItem(region)
+            self.stable_region_patches = []
+
+            # Add new shaded regions
+            for start, end in self.latest_segment_bounds:
+                region = LinearRegionItem(values=(start, end), brush=(0, 255, 0, 50))  # RGBA with transparency
+                region.setZValue(-10)  # Behind data
+                region.setMovable(False)
+                self.plot_widget.addItem(region)
+                self.stable_region_patches.append(region)
 
             self.schedule_next_plot()
 
@@ -272,19 +270,6 @@ class RosGui(QWidget):
         except Exception as e:
             print(f"CSV Error: {e}")
             self.csv_loaded = False
-
-    def reset_graph(self):
-        try:
-            self.csv_index = 0
-            self.start_time = rospy.get_time()
-            self.raw_data.clear()
-            self.raw_times.clear()
-            self.csv_curve.setData([], [])
-            self.raw_curve.setData([], [])
-            self.schedule_next_plot()
-        except Exception as e:
-            rospy.logerr(f"[rr_tracking/gui] error: {e}")
-
 
 if __name__ == "__main__":
     if not rospy.get_param("/enable_gui", False):

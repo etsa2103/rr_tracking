@@ -7,6 +7,7 @@ import mediapipe as mp
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 from cv_bridge import CvBridge
+from rr_tracking.msg import TrackingState
 
 # === Main Tracker Class ===
 class FacialTrackingNode:
@@ -29,10 +30,7 @@ class FacialTrackingNode:
 
         # ROS Publishers/Subscribers
         rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb) #this should be boson640 unless testing on old bag files
-        self.image_annotated_pub = rospy.Publisher("/facial_tracking/image_annotated", Image, queue_size=1)
-        self.image_roi_pub = rospy.Publisher("/facial_tracking/image_roi", Image, queue_size=1)
-        self.tracking_stable_pub = rospy.Publisher("/facial_tracking/tracking_stable", Bool, queue_size=1)
-        self.pose_type_pub = rospy.Publisher("/facial_tracking/pose_type", String, queue_size=1)
+        self.tracking_state_pub = rospy.Publisher("/facial_tracking/trackingState", TrackingState, queue_size=10)
         
         # State 
         self.last_pose_type = "unknown"
@@ -46,6 +44,10 @@ class FacialTrackingNode:
     # ==== Image Callback =====
     def image_raw_cb(self, msg):
         try:
+            tracking_state_msg = TrackingState()
+            # Convert to ROS Image message
+            tracking_state_msg.image_annotated = self.bridge.cv2_to_imgmsg(np.zeros((640, 512, 3), dtype=np.uint8), encoding="rgb8")
+            tracking_state_msg.image_roi = self.bridge.cv2_to_imgmsg(np.zeros((640, 512), dtype=np.uint16), encoding="mono16")
             # === Process the incoming image ===
             image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
             norm = ((image_raw - np.min(image_raw)) / (np.ptp(image_raw) + 1e-5) * 255).astype(np.uint8)
@@ -62,7 +64,8 @@ class FacialTrackingNode:
             pose_landmarks = pose_result.pose_landmarks.landmark
             pose_type = self.determine_pose_type(pose_landmarks)
             self.last_pose_type = pose_type
-            self.pose_type_pub.publish(pose_type)
+            
+            tracking_state_msg.pose_type = String(data = pose_type)
 
             # === Landmark Extraction Based on Pose Type ===
             annotated_image = image_rgb.copy()
@@ -83,11 +86,11 @@ class FacialTrackingNode:
             # === Stability Check (Publish results) ===
             if mroi_box is not None:
                 stable = self.estimate_stability(mroi_box, now)
-                self.tracking_stable_pub.publish(Bool(stable))
+                tracking_state_msg.tracking_stable = Bool(data=stable)
                 self.last_mroi_box = smooth_box(self.last_mroi_box, mroi_box)
                 self.last_mroi_time = now
             else:
-                self.tracking_stable_pub.publish(Bool(False))
+                tracking_state_msg.tracking_stable = Bool(data=False)
 
             # === ROI Cropping (Publish results) ===
             if self.last_mroi_box:
@@ -97,11 +100,14 @@ class FacialTrackingNode:
                 if roi.size > 0:
                     roi_msg = self.bridge.cv2_to_imgmsg(roi, encoding='mono16')
                     roi_msg.header = msg.header
-                    self.image_roi_pub.publish(roi_msg)
+                    tracking_state_msg.image_roi = roi_msg
 
             annotated_msg = self.bridge.cv2_to_imgmsg(annotated_image, encoding='rgb8')
             annotated_msg.header = msg.header
-            self.image_annotated_pub.publish(annotated_msg)
+            
+            
+            tracking_state_msg.image_annotated = annotated_msg
+            self.tracking_state_pub.publish(tracking_state_msg)
 
         except Exception as e:
             rospy.logerr(f"[rr_tracking/facial_tracking] Error: {e}")
@@ -117,7 +123,7 @@ class FacialTrackingNode:
         cx1, cy1 = (self.last_mroi_box[0] + self.last_mroi_box[2]) / 2, (self.last_mroi_box[1] + self.last_mroi_box[3]) / 2
         cx2, cy2 = (new_box[0] + new_box[2]) / 2, (new_box[1] + new_box[3]) / 2
         speed = np.linalg.norm([cx2 - cx1, cy2 - cy1]) / (now - self.last_mroi_time + 1e-5)
-        return speed < 200
+        return speed < 175
 
     # ====== Pose Type Classification ======
     def determine_pose_type(self, landmarks):

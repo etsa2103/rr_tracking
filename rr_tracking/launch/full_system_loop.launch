@@ -2,10 +2,12 @@
   <!-- Setup Parameters -->
   <arg name="enable_gui" default="false" />
   <param name="enable_gui" value="$(arg enable_gui)" />
+  <arg name="recording_time" default="20" />
+  <param name="recording_time" value="$(arg recording_time)" />
   
   <!-- Play the latest thermal recording on loop -->
   <node name="rosbag_play" pkg="rosbag" type="play"
-        args="--loop /home/etsa/boson_recordings/new_tests/side_view.bag"
+        args="--loop /home/etsa/boson_recordings/new_tests/fast_shallow/fast_shallow.bag"
         output="screen" />
 
   <!-- Run facial tracking node -->
