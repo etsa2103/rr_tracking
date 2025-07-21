@@ -7,7 +7,7 @@
   
   <!-- Play the latest thermal recording on loop -->
   <node name="rosbag_play" pkg="rosbag" type="play"
-        args="--loop /home/etsa/boson_recordings/new_tests/fast_shallow/fast_shallow.bag"
+        args="--loop /home/etsa/boson_recordings/new_tests/slow_shallow/slow_shallow.bag"
         output="screen" />
 
   <!-- Run facial tracking node -->

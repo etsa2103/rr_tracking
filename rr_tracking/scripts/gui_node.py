@@ -23,7 +23,7 @@ class RosGui(QWidget):
         self.resize(1400, 1000)
 
         self.mask_checkbox = QCheckBox("Use Background Mask")
-        self.mask_checkbox.setChecked(rospy.get_param("/rr_tracking/use_mask", False))
+        self.mask_checkbox.setChecked(rospy.get_param("/rr_tracking/use_mask", True))
         self.mask_checkbox.stateChanged.connect(self.toggle_mask)
 
         self.bpm_label = QLabel("BPM: --   AVG: --")
@@ -42,9 +42,9 @@ class RosGui(QWidget):
 
         self.plot_widget = pg.PlotWidget(title="Ground Truth vs. Raw Signal")
         self.plot_widget.addLegend()
-        self.csv_curve = self.plot_widget.plot(pen='y', name="CSV Force (centered)")
-        self.raw_curve = self.plot_widget.plot(pen='c', name="Raw Signal")
-        self.peak_scatter = pg.ScatterPlotItem(pen=None, brush=pg.mkBrush('r'), size=8, name="Detected Peaks")
+        self.csv_curve = self.plot_widget.plot(pen='y', name="Chest Force Signal(ground truth)")
+        self.raw_curve = self.plot_widget.plot(pen='c', name="Breath Signal")
+        self.peak_scatter = pg.ScatterPlotItem(pen=None,brush=pg.mkBrush('r'),size=10,symbol='x',name="Detected Peaks")
         self.plot_widget.addItem(self.peak_scatter)
         self.segment_lines = []
 
@@ -90,8 +90,8 @@ class RosGui(QWidget):
         self.latest_segment_bounds = []
         self.stable_region_patches = []
 
-        self.plot_y_range = (-80, 80)
-        csv_path = ""  # Leave blank unless loading CSV
+        self.plot_y_range = (-100, 100)
+        csv_path = ""#"/home/etsa/boson_recordings/new_tests/slow_shallow/slow_shallow.csv"  # Leave blank unless loading CSV
         if csv_path:
             self.load_csv(csv_path)
         else:
@@ -108,15 +108,15 @@ class RosGui(QWidget):
     
     def tracking_state_cb(self, msg):
         try:
-            mask_enabled = rospy.get_param("/rr_tracking/use_mask", False)
+            mask_enabled = rospy.get_param("/rr_tracking/use_mask", True)
             mono16 = self.bridge.imgmsg_to_cv2(msg.image_roi, 'mono16')
             ptp = mono16.ptp()
             norm = ((mono16 - mono16.min()) / ptp * 255).astype(np.uint8) if ptp > 0 else np.zeros_like(mono16, dtype=np.uint8)
             self.img_roi = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
-            if mask_enabled and self.img_raw is not None:
-                threshold = 30400
-                warm_mask = mono16 < threshold
-                self.img_roi[warm_mask] = [0, 0, 255]
+            if mask_enabled:
+                threshold = 29800
+                cold_mask = mono16 < threshold
+                self.img_roi[cold_mask] = [0, 0, 255]
         except Exception as e:
             print(f"roi image Error: {e}")
             
@@ -136,7 +136,7 @@ class RosGui(QWidget):
         self.is_recording = msg.recording.data
         
         self.latest_segment_bounds = [(sr.start_time, sr.end_time) for sr in msg.stable_ranges]
-        print(self.latest_segment_bounds)
+        #print(self.latest_segment_bounds)
         self.latest_peaks = list([peak for peak in msg.peak_times.data])
         
         self.raw_times = msg.graph_times.data
@@ -262,8 +262,8 @@ class RosGui(QWidget):
             forces = df["Data Set 1:Force(N)"].dropna().tolist()
             mid = (min(forces) + max(forces)) / 2
             self.time_data = times
-            self.csv_data = [f - mid for f in forces]
-            self.plot_widget.setXRange(min(times), max(times))
+            self.csv_data = [2*(f - mid) for f in forces]
+            self.plot_widget.setXRange(min(times), 15)
             self.plot_widget.setYRange(*self.plot_y_range)
             self.csv_loaded = True
             print(f"Loaded {len(self.csv_data)} CSV points.")

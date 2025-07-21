@@ -18,7 +18,7 @@ class FacialTrackingNode:
         self.blaze_pose = mp.solutions.pose.Pose(
             static_image_mode=False, 
             model_complexity=1, 
-            min_detection_confidence=0.6)
+            min_detection_confidence=0.5)
         self.face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False, 
             max_num_faces=1, 
@@ -29,7 +29,7 @@ class FacialTrackingNode:
         self.drawing_spec = self.draw_utils.DrawingSpec(thickness=1, circle_radius=1)
 
         # ROS Publishers/Subscribers
-        rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb) #this should be boson640 unless testing on old bag files
+        rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb) #this should be boson640 unless testing on old bag files
         self.tracking_state_pub = rospy.Publisher("/facial_tracking/trackingState", TrackingState, queue_size=10)
         
         # State 
@@ -52,6 +52,12 @@ class FacialTrackingNode:
             image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
             norm = ((image_raw - np.min(image_raw)) / (np.ptp(image_raw) + 1e-5) * 255).astype(np.uint8)
             image_rgb = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
+            
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            clahe_applied = clahe.apply(norm)
+            # Convert to RGB for BlazePose input
+            image_rgb = cv2.cvtColor(clahe_applied, cv2.COLOR_GRAY2RGB)
+            
             # Get image dimensions and current time
             h, w, _ = image_rgb.shape
             now = rospy.get_time()
@@ -75,13 +81,18 @@ class FacialTrackingNode:
                     annotated_image, pose_result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
                 mroi_box = self.get_box_from_blazepose(pose_landmarks, pose_type, w, h)
             elif pose_type == 'frontal':
-                face_result = self.face_mesh.process(image_rgb)
-                if face_result.multi_face_landmarks:
-                    landmarks = face_result.multi_face_landmarks[0]
-                    self.draw_utils.draw_landmarks(
-                        annotated_image, landmarks, mp.solutions.face_mesh.FACEMESH_CONTOURS,
-                        self.drawing_spec, self.drawing_spec)
-                    mroi_box = self.get_box_from_facemesh(landmarks.landmark, w, h)
+                self.draw_utils.draw_landmarks(
+                    annotated_image, pose_result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
+                mroi_box = self.get_box_from_blazepose_frontal(pose_landmarks, w, h)
+
+            # elif pose_type == 'frontal':
+            #     face_result = self.face_mesh.process(image_rgb)
+            #     if face_result.multi_face_landmarks:
+            #         landmarks = face_result.multi_face_landmarks[0]
+            #         self.draw_utils.draw_landmarks(
+            #             annotated_image, landmarks, mp.solutions.face_mesh.FACEMESH_CONTOURS,
+            #             self.drawing_spec, self.drawing_spec)
+            #         mroi_box = self.get_box_from_facemesh(landmarks.landmark, w, h)
 
             # === Stability Check (Publish results) ===
             if mroi_box is not None:
@@ -116,6 +127,23 @@ class FacialTrackingNode:
     # ======================================================= Helper Functions =======================================================
     # ================================================================================================================================
     
+    # def find_main_subject(landmark_groups, image_width):
+    #     """
+    #     Given a list of landmark groups (one per detected person),
+    #     return the landmarks of the subject closest to the center of the image.
+    #     """
+    #     def distance_from_center(landmarks):
+    #         nose = landmarks[mp.solutions.pose.PoseLandmark.NOSE]
+    #         return abs(nose.x * image_width - image_width / 2)
+
+    #     if not landmark_groups:
+    #         return None
+        
+    #     # Sort by distance to center and return the closest one
+    #     landmark_groups.sort(key=distance_from_center)
+    #     return landmark_groups[0]
+
+        
     # ========= Stability Estimation =========
     def estimate_stability(self, new_box, now):
         if self.last_mroi_box is None or self.last_mroi_time is None:
@@ -123,7 +151,7 @@ class FacialTrackingNode:
         cx1, cy1 = (self.last_mroi_box[0] + self.last_mroi_box[2]) / 2, (self.last_mroi_box[1] + self.last_mroi_box[3]) / 2
         cx2, cy2 = (new_box[0] + new_box[2]) / 2, (new_box[1] + new_box[3]) / 2
         speed = np.linalg.norm([cx2 - cx1, cy2 - cy1]) / (now - self.last_mroi_time + 1e-5)
-        return speed < 175
+        return speed < 200
 
     # ====== Pose Type Classification ======
     def determine_pose_type(self, landmarks):
@@ -205,6 +233,33 @@ class FacialTrackingNode:
         fw = int(abs(right.x - left.x) * w * 0.25)
         fh = int(abs(chin.y - nose.y) * h * 0.4)
         return (max(cx - fw // 2, 0), max(cy - fh // 4, 0), min(cx + fw // 2, w), min(cy + fh * 3 // 4, h))
+    
+    def get_box_from_blazepose_frontal(self, landmarks, w, h):
+        lm = mp.solutions.pose.PoseLandmark
+        try:
+            nose      = landmarks[lm.NOSE]
+            left_face = landmarks[lm.LEFT_EAR]
+            right_face= landmarks[lm.RIGHT_EAR]
+            chin      = landmarks[lm.MOUTH_LEFT]  # BlazePose has no true chin; approx with mouth
+        except IndexError:
+            rospy.logdebug(f"[rr_tracking/facial_tracking] Missing key BlazePose landmarks for frontal box.")
+            return None
+
+        if not all(valid_landmark(l) for l in [nose, left_face, right_face, chin]):
+            return None
+
+        cx = int(nose.x * w)
+        cy = int(nose.y * h)
+
+        fw = int(abs(right_face.x - left_face.x) * w * 0.4)
+        fh = int(abs(chin.y - nose.y) * h * 0.7)
+
+        return (
+            max(cx - fw // 2, 0),
+            max(cy - fh // 4, 0),
+            min(cx + fw // 2, w),
+            min(cy + fh * 3 // 4, h)
+        )
     
 # =========================================================================================================
 # =========================================== Utility Functions ===========================================
