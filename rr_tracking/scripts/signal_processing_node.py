@@ -58,7 +58,7 @@ class SignalProcessingNode:
             
     def tracking_state_cb(self, msg):
         self.image_roi = self.bridge.imgmsg_to_cv2(msg.image_roi, desired_encoding="mono16")
-        self.process_signal()
+        self.process_image()
         recording_time = rospy.get_param("/recording_time", 20)
         if self.recording and (rospy.get_time() - self.record_start_time >= recording_time): #maybe add a way to stop before 20 seconds
                 self.recording = False
@@ -71,22 +71,25 @@ class SignalProcessingNode:
     # ===================================================== Signal Processing  ======================================================
     # ================================================================================================================================
     def extract_warm_pixels(self, frame, use_mask=True):
-        threshold = 29800
+        threshold = 29900
         if use_mask:
             return frame[frame > threshold]  
         else:
             return frame.flatten()
 
-    def process_signal(self):
-         # Check edge case
+    def process_image(self):
+        # ====== Processes Image ======
+         # Empty ROI Image (edge case)
         if self.image_roi is None or self.image_roi.size == 0:
             self.stable_timer = time.time()-self.start_time
             rospy.logwarn_throttle(1.0, "[signal_processing] Empty ROI image.")
             return
+        
         # Mask background pixels
         use_mask = rospy.get_param("/rr_tracking/use_mask", False)
         warm_pixels = self.extract_warm_pixels(self.image_roi, use_mask)
-        # Check edge case
+        
+        # Invalid ROI (edge case)
         if warm_pixels.size == 0 or warm_pixels.mean() < 0.3:
             rospy.logwarn_throttle(1.0, "[signal_processing] Invalid ROI — skipping.")
             return
@@ -94,12 +97,13 @@ class SignalProcessingNode:
             self.stable_timer = time.time()-self.start_time
             rospy.logwarn_throttle(1.0, "[signal_processing] Unstable tracking — skipping.")
             return
+        
         # Update signal buffers
         mean_val = np.mean(warm_pixels)
         now = rospy.get_time()
         self.signal_buffer.append(mean_val)
         
-        # Check edge case
+        # Signal Buffer not filled (edge case)
         if len(self.signal_buffer) < self.signal_buffer.maxlen:
             self.stable_timer = time.time()-self.start_time
             rospy.logwarn_throttle(5.0, "[signal_processing] Buffering live signal...")
@@ -114,11 +118,12 @@ class SignalProcessingNode:
         inverted = np.clip(-normalized, -100, 100)
         self.peak_buffer.append(inverted[-1])
         
-        # analysis
+        # ====== Analyze Signal ======
         peak_signal = np.array(self.peak_buffer)
         poses = np.array(self.pose_buffer)
         timestamps = np.array(self.time_buffer)
         
+        # Find stable segments of singal
         t = time.time() - self.start_time
         if(t-self.stable_timer > 5.0):
             if(self.stable_ranges):
@@ -134,9 +139,9 @@ class SignalProcessingNode:
                 self.stable_ranges.pop(0)
         segments = [(sr.start_time, sr.end_time) for sr in self.stable_ranges]
         
+        # Do peak analysis on stable segments
         rr_values = []
         all_peak_times = []
-        # Check edge case
         if segments:
             # For each stable segment get the time of all peaks and calculate rr
             for start_time, end_time in segments:
@@ -164,11 +169,10 @@ class SignalProcessingNode:
                 if(len(peak_times) >= 2):
                     for i in range(len(peak_times)-1):
                         rr_values.append(60.0/(peak_times[i+1] - peak_times[i]))
-                
         else:
             rospy.logwarn_throttle(1.0,"[signal_processing] No valid stable segments found.")
                     
-        # Publish processing state
+        # ===== Publish processing state =====
         processing_state_msg = ProcessingState()
         processing_state_msg.recording = Bool(data=self.recording)
         processing_state_msg.graph_data = Float64MultiArray(data=peak_signal.tolist())

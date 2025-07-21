@@ -71,3 +71,9 @@ source devel/setup.bash
 ## BUGS
 - when peak buffer fills the gui freezes
 ---
+
+roslaunch rr_tracking full_system_live.launch enable_gui:=True old_bagged_data:=False recording_time:=20
+roslaunch rr_tracking full_system_loop.launch enable_gui:=True old_bagged_data:=False recording_time:=20
+
+
+

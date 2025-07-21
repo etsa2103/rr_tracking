@@ -19,6 +19,11 @@ from rr_tracking.msg import ProcessingState, StableRange
 class RosGui(QWidget):
     def __init__(self):
         super().__init__()
+        
+        # Settings
+        self.old_bagged_data = rospy.get_param("/old_bagged_data", False)
+        
+        # UI Setup
         self.setWindowTitle("Resperatory Rate Tracking GUI")
         self.resize(1400, 1000)
 
@@ -70,7 +75,11 @@ class RosGui(QWidget):
         rospy.init_node("gui_node", anonymous=True)
         self.bridge = CvBridge()
 
-        rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb)
+        if(self.old_bagged_data):
+            rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
+        else:
+            rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb)
+            
         rospy.Subscriber("/facial_tracking/trackingState", TrackingState, self.tracking_state_cb)
         rospy.Subscriber("/signal_processing/processingState", ProcessingState, self.processing_state_cb)
 
@@ -114,7 +123,7 @@ class RosGui(QWidget):
             norm = ((mono16 - mono16.min()) / ptp * 255).astype(np.uint8) if ptp > 0 else np.zeros_like(mono16, dtype=np.uint8)
             self.img_roi = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
             if mask_enabled:
-                threshold = 29800
+                threshold = 29900
                 cold_mask = mono16 < threshold
                 self.img_roi[cold_mask] = [0, 0, 255]
         except Exception as e:

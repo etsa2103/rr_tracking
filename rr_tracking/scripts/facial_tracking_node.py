@@ -12,6 +12,11 @@ from rr_tracking.msg import TrackingState
 # === Main Tracker Class ===
 class FacialTrackingNode:
     def __init__(self):
+        # Settings
+        self.use_clahe = True
+        self.use_face_mesh = False
+        self.old_bagged_data = rospy.get_param("/old_bagged_data", False)
+        
         # ROS and Model Setup
         rospy.init_node("facial_tracking_node")
         self.bridge = CvBridge()
@@ -19,21 +24,24 @@ class FacialTrackingNode:
             static_image_mode=False, 
             model_complexity=1, 
             min_detection_confidence=0.5)
-        self.face_mesh = mp.solutions.face_mesh.FaceMesh(
-            static_image_mode=False, 
-            max_num_faces=1, 
-            refine_landmarks=True,
-            min_detection_confidence=0.5, 
-            min_tracking_confidence=0.5)
+        if(self.use_face_mesh):
+            self.face_mesh = mp.solutions.face_mesh.FaceMesh(
+                static_image_mode=False, 
+                max_num_faces=1, 
+                refine_landmarks=True,
+                min_detection_confidence=0.5, 
+                min_tracking_confidence=0.5)
         self.draw_utils = mp.solutions.drawing_utils
         self.drawing_spec = self.draw_utils.DrawingSpec(thickness=1, circle_radius=1)
 
         # ROS Publishers/Subscribers
-        rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb) #this should be boson640 unless testing on old bag files
+        if(self.old_bagged_data):
+            rospy.Subscriber("/boson/image_raw", Image, self.image_raw_cb)
+        else:
+            rospy.Subscriber("/boson640/image_raw", Image, self.image_raw_cb)
         self.tracking_state_pub = rospy.Publisher("/facial_tracking/trackingState", TrackingState, queue_size=10)
         
-        # State 
-        self.last_pose_type = "unknown"
+        # MROI vars
         self.last_mroi_box = None
         self.last_mroi_time = None
     
@@ -44,20 +52,21 @@ class FacialTrackingNode:
     # ==== Image Callback =====
     def image_raw_cb(self, msg):
         try:
+            # === Add images to state message ===
             tracking_state_msg = TrackingState()
-            # Convert to ROS Image message
             tracking_state_msg.image_annotated = self.bridge.cv2_to_imgmsg(np.zeros((640, 512, 3), dtype=np.uint8), encoding="rgb8")
             tracking_state_msg.image_roi = self.bridge.cv2_to_imgmsg(np.zeros((640, 512), dtype=np.uint16), encoding="mono16")
+            
             # === Process the incoming image ===
             image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
             norm = ((image_raw - np.min(image_raw)) / (np.ptp(image_raw) + 1e-5) * 255).astype(np.uint8)
-            image_rgb = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
-            
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            clahe_applied = clahe.apply(norm)
-            # Convert to RGB for BlazePose input
-            image_rgb = cv2.cvtColor(clahe_applied, cv2.COLOR_GRAY2RGB)
-            
+            if(self.use_clahe):
+                clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(16, 16))
+                clahe_applied = clahe.apply(norm)
+                # Convert to RGB for BlazePose input
+                image_rgb = cv2.cvtColor(clahe_applied, cv2.COLOR_GRAY2RGB)
+            else:
+                image_rgb = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
             # Get image dimensions and current time
             h, w, _ = image_rgb.shape
             now = rospy.get_time()
@@ -69,8 +78,7 @@ class FacialTrackingNode:
                 return
             pose_landmarks = pose_result.pose_landmarks.landmark
             pose_type = self.determine_pose_type(pose_landmarks)
-            self.last_pose_type = pose_type
-            
+            # Update State message
             tracking_state_msg.pose_type = String(data = pose_type)
 
             # === Landmark Extraction Based on Pose Type ===
@@ -81,18 +89,17 @@ class FacialTrackingNode:
                     annotated_image, pose_result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
                 mroi_box = self.get_box_from_blazepose(pose_landmarks, pose_type, w, h)
             elif pose_type == 'frontal':
-                self.draw_utils.draw_landmarks(
-                    annotated_image, pose_result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
-                mroi_box = self.get_box_from_blazepose_frontal(pose_landmarks, w, h)
-
-            # elif pose_type == 'frontal':
-            #     face_result = self.face_mesh.process(image_rgb)
-            #     if face_result.multi_face_landmarks:
-            #         landmarks = face_result.multi_face_landmarks[0]
-            #         self.draw_utils.draw_landmarks(
-            #             annotated_image, landmarks, mp.solutions.face_mesh.FACEMESH_CONTOURS,
-            #             self.drawing_spec, self.drawing_spec)
-            #         mroi_box = self.get_box_from_facemesh(landmarks.landmark, w, h)
+                if(self.use_face_mesh):
+                    face_result = self.face_mesh.process(image_rgb)
+                    if face_result.multi_face_landmarks:
+                        landmarks = face_result.multi_face_landmarks[0]
+                        self.draw_utils.draw_landmarks(
+                            annotated_image, landmarks, mp.solutions.face_mesh.FACEMESH_CONTOURS,
+                            self.drawing_spec, self.drawing_spec)
+                        mroi_box = self.get_box_from_facemesh(landmarks.landmark, w, h)
+                else:
+                    self.draw_utils.draw_landmarks(annotated_image, pose_result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
+                    mroi_box = self.get_box_from_blazepose_frontal(pose_landmarks, w, h)
 
             # === Stability Check (Publish results) ===
             if mroi_box is not None:
@@ -112,11 +119,9 @@ class FacialTrackingNode:
                     roi_msg = self.bridge.cv2_to_imgmsg(roi, encoding='mono16')
                     roi_msg.header = msg.header
                     tracking_state_msg.image_roi = roi_msg
-
             annotated_msg = self.bridge.cv2_to_imgmsg(annotated_image, encoding='rgb8')
             annotated_msg.header = msg.header
-            
-            
+            # Update State
             tracking_state_msg.image_annotated = annotated_msg
             self.tracking_state_pub.publish(tracking_state_msg)
 
@@ -126,24 +131,7 @@ class FacialTrackingNode:
     # ================================================================================================================================      
     # ======================================================= Helper Functions =======================================================
     # ================================================================================================================================
-    
-    # def find_main_subject(landmark_groups, image_width):
-    #     """
-    #     Given a list of landmark groups (one per detected person),
-    #     return the landmarks of the subject closest to the center of the image.
-    #     """
-    #     def distance_from_center(landmarks):
-    #         nose = landmarks[mp.solutions.pose.PoseLandmark.NOSE]
-    #         return abs(nose.x * image_width - image_width / 2)
-
-    #     if not landmark_groups:
-    #         return None
-        
-    #     # Sort by distance to center and return the closest one
-    #     landmark_groups.sort(key=distance_from_center)
-    #     return landmark_groups[0]
-
-        
+     
     # ========= Stability Estimation =========
     def estimate_stability(self, new_box, now):
         if self.last_mroi_box is None or self.last_mroi_time is None:
@@ -151,7 +139,7 @@ class FacialTrackingNode:
         cx1, cy1 = (self.last_mroi_box[0] + self.last_mroi_box[2]) / 2, (self.last_mroi_box[1] + self.last_mroi_box[3]) / 2
         cx2, cy2 = (new_box[0] + new_box[2]) / 2, (new_box[1] + new_box[3]) / 2
         speed = np.linalg.norm([cx2 - cx1, cy2 - cy1]) / (now - self.last_mroi_time + 1e-5)
-        return speed < 200
+        return speed < 180
 
     # ====== Pose Type Classification ======
     def determine_pose_type(self, landmarks):
@@ -222,18 +210,7 @@ class FacialTrackingNode:
 
         return (x_min, y_min, x_max, y_max)
 
-    # === Box Estimation for Frontal View (FaceMesh) ===
-    def get_box_from_facemesh(self, landmarks, w, h):
-        try:
-            nose, left, right, chin = landmarks[1], landmarks[234], landmarks[454], landmarks[152]
-        except IndexError:
-            rospy.logdebug(f"[rr_tracking/facial_tracking] FaceMesh does not have sufficient landmarks for nose tracking")
-            return None
-        cx, cy = int(nose.x * w), int(nose.y * h)
-        fw = int(abs(right.x - left.x) * w * 0.25)
-        fh = int(abs(chin.y - nose.y) * h * 0.4)
-        return (max(cx - fw // 2, 0), max(cy - fh // 4, 0), min(cx + fw // 2, w), min(cy + fh * 3 // 4, h))
-    
+    # === Box Estimation for Frontal View (Blazepose) ===
     def get_box_from_blazepose_frontal(self, landmarks, w, h):
         lm = mp.solutions.pose.PoseLandmark
         try:
@@ -250,16 +227,22 @@ class FacialTrackingNode:
 
         cx = int(nose.x * w)
         cy = int(nose.y * h)
-
         fw = int(abs(right_face.x - left_face.x) * w * 0.4)
         fh = int(abs(chin.y - nose.y) * h * 0.7)
 
-        return (
-            max(cx - fw // 2, 0),
-            max(cy - fh // 4, 0),
-            min(cx + fw // 2, w),
-            min(cy + fh * 3 // 4, h)
+        return (max(cx - fw // 2, 0), max(cy - fh // 4, 0), min(cx + fw // 2, w), min(cy + fh * 3 // 4, h)
         )
+    # === Box Estimation for Frontal View (FaceMesh) ===
+    def get_box_from_facemesh(self, landmarks, w, h):
+        try:
+            nose, left, right, chin = landmarks[1], landmarks[234], landmarks[454], landmarks[152]
+        except IndexError:
+            rospy.logdebug(f"[rr_tracking/facial_tracking] FaceMesh does not have sufficient landmarks for nose tracking")
+            return None
+        cx, cy = int(nose.x * w), int(nose.y * h)
+        fw = int(abs(right.x - left.x) * w * 0.25)
+        fh = int(abs(chin.y - nose.y) * h * 0.4)
+        return (max(cx - fw // 2, 0), max(cy - fh // 4, 0), min(cx + fw // 2, w), min(cy + fh * 3 // 4, h))
     
 # =========================================================================================================
 # =========================================== Utility Functions ===========================================
