@@ -16,8 +16,8 @@ catkin_ws/
 ## Launch Files
 | Launch File | Description |
 |-------------|-------------|
-| `boson_camera/launch/boson_with_display.launch` | Starts Boson camera driver to broadcast the video on /boson/image_raw and launches display|
-| `boson_camera/launch/boson640.launch` | Starts Boson camera driver to broadcast the video on /boson/image_raw|
+| `boson_camera/launch/boson_with_display.launch` | Starts Boson camera driver to broadcast the video on /boson640/image_raw and launches display|
+| `boson_camera/launch/boson640.launch` | Starts Boson camera driver to broadcast the video on /boson640/image_raw|
 | `rr_tracking/launch/full_system_live.launch` | Has boson stream live video, runs blazePose on raw video to get pixels under the nose, analyzes these pixels to get resperation rate |
 | `rr_tracking/launch/full_system_loop.launch` | Run ros bag of old boson recording, runs blazePose on raw video to get pixels under the nose, analyzes these pixels to get resperation rate |
 
@@ -36,7 +36,7 @@ source devel/setup.bash
 ### `boson_camera`
 - Nodes:
   - `boson_ros_node.cpp`
-    - Publishes `mono16` audio on `/boson/image_raw`.
+    - Publishes `mono16` video on `/boson640/image_raw`.
 - Config options:  
     - Edit `boson640_config.yaml` to config camera settings
 
@@ -47,19 +47,22 @@ source devel/setup.bash
 ### `rr_tracking`
 - Nodes:
   - `facial_tracking_node.cpp`
-    - Looks at raw video on `/boson/image_raw` topic and converts from `mono16` to `rgb8` so it can be used in facial tracking models. 
+    - Looks at raw video on `/boson640/image_raw` topic and converts from `mono16` to `rgb8` so it can be used in facial tracking models. 
     - Runs blazePose to determine head pose (left, front, right)
     - Based on pose either run blazePose or faceMesh to determine facial landmarks
-    - Create annotated image with landmarks drawn box and a box around nose region. Published as `rgb8` image on `/boson/image_annotated`
-    - Grabs pixels around nose region on raw `mono16` image and and publishes on `/boson/image_roi`
+    - Create annotated image with landmarks drawn and a box around nose region. Update state variable with this image
+    - Grabs pixels around nose region on raw `mono16` image and update state variable with this image
+    - Publish the tracking state variable on /facial_tracking/trackingState
   - `gui_node.cpp`
     - Shows current and average bpm readings
-    - Streams images found on `/boson/image_annotated`, and `/boson/image_roi` topics.
-    - Shows graph of raw signal found on `/rr_tracking/raw_signal` topic and a csv file you can specify with the ground truth data
+    - Streams images from the state variable found on /facial_tracking/trackingState topic.
+    - Shows graph of raw signal and puts marks on peaks and stable segments using the state variable found on `/facial_tracking/trackingState` topic.
+    - Shows ground truth on graph if you specify a csv file.
   - `signal_processing_node.cpp`
-    - Looks at `mono16` video on `/boson/image_roi`.
-    - Takes average of pixels to get raw signal
-    - Filters signal then extracts resperation rate
+    - Looks at `mono16` video from the state variable found on `/facial_tracking/trackingState`
+    - Takes average of pixels to get raw signal (with an option to mask background pixels)
+    - Filters signal
+    - Looks at stable sections of signal and extracts resperation rate
 
 ## TODO
 - [x] Record thermal images
@@ -69,7 +72,7 @@ source devel/setup.bash
 - [ ] Improve signal filtering
 - [ ] Test in different environments on different people
 ## BUGS
-- when peak buffer fills the gui freezes
+- 
 ---
 
 roslaunch rr_tracking full_system_live.launch enable_gui:=True old_bagged_data:=False recording_time:=20
