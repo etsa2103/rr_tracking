@@ -9,8 +9,8 @@ from std_msgs.msg import Float32, UInt8, Float64MultiArray, Bool
 from scipy.ndimage import uniform_filter1d
 from scipy.signal import butter, filtfilt, find_peaks
 
-from rr_tracking.msg import TrackingState
-from rr_tracking.msg import ProcessingState, StableRange
+from rr_tracker.msg import TrackingState
+from rr_tracker.msg import ProcessingState, StableRange
 
 class SignalProcessingNode:
     def __init__(self):
@@ -25,7 +25,7 @@ class SignalProcessingNode:
 
         # Variables
         self.frame_rate = 30
-        self.min_peak_distance = 0.8
+        self.min_peak_distance = 1.4
         
         self.recording = False
         self.record_start_time = None
@@ -86,7 +86,7 @@ class SignalProcessingNode:
             return
         
         # Mask background pixels
-        use_mask = rospy.get_param("/rr_tracking/use_mask", False)
+        use_mask = rospy.get_param("/rr_tracker/use_mask", False)
         warm_pixels = self.extract_warm_pixels(self.image_roi, use_mask)
         
         # Invalid ROI (edge case)
@@ -158,7 +158,7 @@ class SignalProcessingNode:
                 if len(seg_poses) == 0:
                     continue
                 most_common_pose = Counter(seg_poses).most_common(1)[0][0]
-                min_prominence = 30 if most_common_pose in ["left", "right"] else 15
+                min_prominence = 40 if most_common_pose in ["left", "right"] else 35
                 min_samples = int(self.min_peak_distance * self.frame_rate)
                 peaks, _ = find_peaks(seg_signal, distance=min_samples, prominence=min_prominence)
                 peak_times = []

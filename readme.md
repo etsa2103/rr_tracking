@@ -8,7 +8,7 @@ This repository contains a complete ROS Noetic workspace for working with the Bo
 catkin_ws/
 ├── boson_camera/        # C++ driver and ROS node for interfacing with the Boson camera
 ├── catkin_simple/       # Catkin Simple build system (was needed for boson_camera)
-├── rr_tracking/         # Custom scripts for respiration rate tracking
+├── rr_tracker/         # Custom scripts for respiration rate tracking
 ├── CMakeLists.txt       # Top-level symlink to ROS toplevel.cmake
 └── readme.md            # You are here
 ```
@@ -18,8 +18,8 @@ catkin_ws/
 |-------------|-------------|
 | `boson_camera/launch/boson_with_display.launch` | Starts Boson camera driver to broadcast the video on /boson640/image_raw and launches display|
 | `boson_camera/launch/boson640.launch` | Starts Boson camera driver to broadcast the video on /boson640/image_raw|
-| `rr_tracking/launch/full_system_live.launch` | Has boson stream live video, runs blazePose on raw video to get pixels under the nose, analyzes these pixels to get resperation rate |
-| `rr_tracking/launch/full_system_loop.launch` | Run ros bag of old boson recording, runs blazePose on raw video to get pixels under the nose, analyzes these pixels to get resperation rate |
+| `rr_tracker/launch/full_system_live.launch` | Has boson stream live video, runs blazePose on raw video to get pixels under the nose, analyzes these pixels to get resperation rate |
+| `rr_tracker/launch/full_system_loop.launch` | Run ros bag of old boson recording, runs blazePose on raw video to get pixels under the nose, analyzes these pixels to get resperation rate |
 
 ## Setup Notes
 
@@ -44,7 +44,7 @@ source devel/setup.bash
 - Needed for boson_camera and used for CMakeList files
 - No need to touch
 
-### `rr_tracking`
+### `rr_tracker`
 - Nodes:
   - `facial_tracking_node.cpp`
     - Looks at raw video on `/boson640/image_raw` topic and converts from `mono16` to `rgb8` so it can be used in facial tracking models. 
@@ -75,8 +75,8 @@ source devel/setup.bash
 - 
 ---
 
-roslaunch rr_tracking full_system_live.launch enable_gui:=True old_bagged_data:=False recording_time:=20
-roslaunch rr_tracking full_system_loop.launch enable_gui:=True old_bagged_data:=False recording_time:=20
+roslaunch rr_tracker full_system_live.launch enable_gui:=True old_bagged_data:=False recording_time:=20
+roslaunch rr_tracker full_system_loop.launch enable_gui:=True old_bagged_data:=False recording_time:=20
 
 
 

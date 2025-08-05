@@ -59,7 +59,7 @@ frame_rate: 30.0
 #  The target gain in percent of the maximal value the camera supports
 #  For USB-Cameras, the gain is in dB, for GigE-Cameras it is given in so
 #  called 'device specific units'.
-#  gain: 0.5
+gain: 1.0
 
 #  Gamma correction of pixel intensity.
 #  Adjusts the brightness of the pixel values output by the camera's sensor
@@ -97,8 +97,8 @@ brightness_continuous: true
 #  reached by adapting the exposure time.
 #  The gain_auto flag indicates, that the desired brightness will be
 #  reached by adapting the gain.
-exposure_auto: true
-gain_auto: true
+exposure_auto: false
+gain_auto: false
 
 ##########################################################################
 

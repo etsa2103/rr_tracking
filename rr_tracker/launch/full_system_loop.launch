@@ -9,16 +9,16 @@
   
   <!-- Play the latest thermal recording on loop -->
   <node name="rosbag_play" pkg="rosbag" type="play"
-        args="--loop /home/etsa/boson_recordings/outside_tests/test1.bag"
+        args="--loop /home/etsa/dtc/boson_recordings/night/test1.bag"
         output="screen" />
 
   <!-- Run facial tracking node -->
-  <node pkg="rr_tracking" type="facial_tracking_node.py" name="facial_tracking_node" output="screen" />
+  <node pkg="rr_tracker" type="facial_tracking_node.py" name="facial_tracking_node" output="screen" />
 
   <!-- Run signal processing node -->
-  <node pkg="rr_tracking" type="signal_processing_node.py" name="signal_processing_node" output="screen" />
+  <node pkg="rr_tracker" type="signal_processing_node.py" name="signal_processing_node" output="screen" />
 
   <!-- Run the display node -->
-  <node pkg="rr_tracking" type="gui_node.py" name="gui_node" 
+  <node pkg="rr_tracker" type="gui_node.py" name="gui_node" 
         output="screen" launch-prefix="python3" />
 </launch>

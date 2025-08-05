@@ -7,7 +7,7 @@ import mediapipe as mp
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 from cv_bridge import CvBridge
-from rr_tracking.msg import TrackingState
+from rr_tracker.msg import TrackingState
 
 # === Main Tracker Class ===
 class FacialTrackingNode:
@@ -44,6 +44,8 @@ class FacialTrackingNode:
         # MROI vars
         self.last_mroi_box = None
         self.last_mroi_time = None
+        # Other vars
+        self.temp_c = None
     
     # ================================================================================================================================      
     # ====================================================== Callback Functions ======================================================
@@ -59,6 +61,12 @@ class FacialTrackingNode:
             
             # === Process the incoming image ===
             image_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding="mono16")
+            
+            # Convert raw image to temperature in Celsius
+            self.temp_c = image_raw * 0.009 - 238
+            self.temp_c = np.clip(self.temp_c, -30, 140)
+            #rospy.logwarn(f"[rr_tracker/facial_tracking] Temperature: {np.mean(self.temp_c):.2f} C")
+            
             norm = ((image_raw - np.min(image_raw)) / (np.ptp(image_raw) + 1e-5) * 255).astype(np.uint8)
             if(self.use_clahe):
                 clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(16, 16))
@@ -74,7 +82,7 @@ class FacialTrackingNode:
             # === Pose Detection ===
             pose_result = self.blaze_pose.process(image_rgb)
             if not pose_result.pose_landmarks:
-                rospy.logdebug(f"[rr_tracking/facial_tracking] No pose detected by BlazePose")
+                rospy.logdebug(f"[rr_tracker/facial_tracking] No pose detected by BlazePose")
                 return
             pose_landmarks = pose_result.pose_landmarks.landmark
             pose_type = self.determine_pose_type(pose_landmarks)
@@ -83,6 +91,7 @@ class FacialTrackingNode:
 
             # === Landmark Extraction Based on Pose Type ===
             annotated_image = image_rgb.copy()
+
             mroi_box = None
             if pose_type in ['left', 'right']:
                 self.draw_utils.draw_landmarks(
@@ -126,7 +135,7 @@ class FacialTrackingNode:
             self.tracking_state_pub.publish(tracking_state_msg)
 
         except Exception as e:
-            rospy.logerr(f"[rr_tracking/facial_tracking] Error: {e}")
+            rospy.logerr(f"[rr_tracker/facial_tracking] Error: {e}")
       
     # ================================================================================================================================      
     # ======================================================= Helper Functions =======================================================
@@ -139,7 +148,7 @@ class FacialTrackingNode:
         cx1, cy1 = (self.last_mroi_box[0] + self.last_mroi_box[2]) / 2, (self.last_mroi_box[1] + self.last_mroi_box[3]) / 2
         cx2, cy2 = (new_box[0] + new_box[2]) / 2, (new_box[1] + new_box[3]) / 2
         speed = np.linalg.norm([cx2 - cx1, cy2 - cy1]) / (now - self.last_mroi_time + 1e-5)
-        return speed < 180
+        return speed < 200
 
     # ====== Pose Type Classification ======
     def determine_pose_type(self, landmarks):
@@ -170,7 +179,7 @@ class FacialTrackingNode:
         else:
             return None
         if not (valid_landmark(eye) and valid_landmark(mouth)):
-            rospy.logdebug(f"[rr_tracking/facial_tracking] BlazePose does not have sufficient landmarks for nose tracking")
+            rospy.logdebug(f"[rr_tracker/facial_tracking] BlazePose does not have sufficient landmarks for nose tracking")
             return None
 
         # Convert to image coordinates
@@ -219,7 +228,7 @@ class FacialTrackingNode:
             right_face= landmarks[lm.RIGHT_EAR]
             chin      = landmarks[lm.MOUTH_LEFT]  # BlazePose has no true chin; approx with mouth
         except IndexError:
-            rospy.logdebug(f"[rr_tracking/facial_tracking] Missing key BlazePose landmarks for frontal box.")
+            rospy.logdebug(f"[rr_tracker/facial_tracking] Missing key BlazePose landmarks for frontal box.")
             return None
 
         if not all(valid_landmark(l) for l in [nose, left_face, right_face, chin]):
@@ -237,7 +246,7 @@ class FacialTrackingNode:
         try:
             nose, left, right, chin = landmarks[1], landmarks[234], landmarks[454], landmarks[152]
         except IndexError:
-            rospy.logdebug(f"[rr_tracking/facial_tracking] FaceMesh does not have sufficient landmarks for nose tracking")
+            rospy.logdebug(f"[rr_tracker/facial_tracking] FaceMesh does not have sufficient landmarks for nose tracking")
             return None
         cx, cy = int(nose.x * w), int(nose.y * h)
         fw = int(abs(right.x - left.x) * w * 0.25)
